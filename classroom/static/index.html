@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f6f7f3">
+  <title>수업 사이 · Classroom Bridge</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script defer src="/static/app.js"></script>
+</head>
+<body>
+<svg class="svg-definitions" aria-hidden="true"><defs>
+<symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+<symbol id="i-book" viewBox="0 0 24 24"><path d="M12 5c-3-2-7-2-9-1v15c3-1 6-1 9 1 3-2 6-2 9-1V4c-2-1-6-1-9 1Z"/><path d="M12 5v15"/></symbol>
+<symbol id="i-chat" viewBox="0 0 24 24"><path d="M20 15a3 3 0 0 1-3 3H8l-5 3V6a3 3 0 0 1 3-3h11a3 3 0 0 1 3 3Z"/><path d="M7 8h9M7 12h6"/></symbol>
+<symbol id="i-link" viewBox="0 0 24 24"><path d="m9 15 6-6M8 16l-1 1a4.2 4.2 0 0 1-6-6l4-4a4.2 4.2 0 0 1 6 0M16 8l1-1a4.2 4.2 0 0 1 6 6l-4 4a4.2 4.2 0 0 1-6 0" transform="translate(0 -1) scale(.95)"/></symbol>
+<symbol id="i-arrow" viewBox="0 0 24 24"><path d="M4 12h15m-6-6 6 6-6 6"/></symbol>
+<symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H5v18h14V8Z"/><path d="M14 3v5h5M8 12h8M8 16h5"/></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V3m-5 5 5-5 5 5M4 15v6h16v-6"/></symbol>
+<symbol id="i-spark" viewBox="0 0 24 24"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5ZM20 2v4m-2-2h4"/></symbol>
+<symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V3H3v13h5"/></symbol>
+<symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+<symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+<symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v1"/></symbol>
+<symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+<symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7m4-7v7"/></symbol>
+</defs></svg>
+<div class="app-shell">
+<aside class="sidebar" id="sidebar" aria-label="주 탐색">
+  <a class="brand" href="#dashboard" aria-label="수업 사이 홈"><span class="brand-mark"><i></i><i></i><i></i></span><span>수업 사이<small>CLASSROOM BRIDGE</small></span></a>
+  <div class="workspace-label">TEACHING WORKSPACE</div>
+  <div class="course-control"><label for="course-select">내 수업</label><select id="course-select" aria-label="수업 선택"><option>불러오는 중…</option></select><button id="new-course" class="icon-button" title="새 수업 만들기" aria-label="새 수업 만들기"><svg><use href="#i-plus"/></svg></button></div>
+  <nav class="nav"><a href="#dashboard" data-page="dashboard" class="active"><svg><use href="#i-grid"/></svg>수업 현황<span class="nav-dot"></span></a><a href="#materials" data-page="materials"><svg><use href="#i-book"/></svg>강의자료</a><a href="#student" data-page="student"><svg><use href="#i-chat"/></svg>학생 질문 체험</a><a href="#connect" data-page="connect"><svg><use href="#i-link"/></svg>AI 연결</a></nav>
+  <div class="sidebar-note"><div class="note-line"></div><p>질문과 이해 사이,<br>더 가까워지는 수업.</p><span>YOUR COURSE, CONNECTED.</span></div>
+  <div class="sidebar-bottom"><div class="provider-status"><span class="status-dot"></span><span id="provider-label">연결 확인 중</span><span class="prototype-tag">PROTOTYPE</span></div><div class="profile"><span class="avatar">교</span><div>교수 워크스페이스<small>로컬 체험 · 로그인 없음</small></div></div></div>
+</aside>
+<div class="sidebar-shade" id="sidebar-shade"></div>
+<main class="main">
+  <header class="topbar"><div class="breadcrumb"><button class="icon-button mobile-menu" id="menu-button" aria-label="메뉴 열기" aria-expanded="false"><svg><use href="#i-menu"/></svg></button><span>내 워크스페이스</span><span class="crumb-slash">/</span><strong id="breadcrumb-title">수업 현황</strong></div><span class="topbar-right"><span class="small-dot"></span>LOCAL WORKSPACE<span class="topbar-avatar">교</span></span></header>
+  <div class="content">
+  <div class="mode-banner" id="mode-banner" role="status"><svg><use href="#i-info"/></svg><span>연결 상태를 확인하고 있어요.</span><a href="#connect">연결 설정 <span aria-hidden="true">↗</span></a></div>
+  <div id="global-error" class="error-message" role="alert" hidden></div>
+  <section class="page active" id="page-dashboard" aria-labelledby="dashboard-title">
+    <div class="page-heading"><div><div class="eyebrow">A WINDOW INTO YOUR CLASS</div><h1 id="dashboard-title">질문이 모이면,<br class="mobile-break"> 수업이 보입니다.</h1><p><span id="dashboard-course">수업</span>에서 오가는 궁금함을 살펴보세요.</p></div><a class="button button-dark" href="#student">질문 체험하기<svg><use href="#i-arrow"/></svg></a></div>
+    <div class="dashboard-context"><span class="course-pill"><svg><use href="#i-book"/></svg><span id="course-pill-title">수업 불러오는 중</span></span><span id="demo-data-label" class="subtle-label"></span><span class="context-date" id="today-label"></span></div>
+    <div class="stats-grid" id="stats-grid" aria-live="polite">
+      <article class="stat-card"><div class="stat-label">쌓인 질문<svg><use href="#i-chat"/></svg></div><div class="stat-value" id="stat-questions">—<span>개</span></div><div class="stat-foot" id="stat-question-foot">질문을 불러오는 중</div></article>
+      <article class="stat-card"><div class="stat-label">자료에서 찾은 근거<svg><use href="#i-check"/></svg></div><div class="stat-value" id="stat-grounded">—<span>건</span></div><div class="stat-foot">등록된 강의자료로 확인한 질문</div></article>
+      <article class="stat-card"><div class="stat-label">근거가 부족한 질문<svg><use href="#i-info"/></svg></div><div class="stat-value" id="stat-insufficient">—<span>건</span></div><div class="stat-foot">보충 자료를 살펴볼 기회</div></article>
+      <article class="stat-card"><div class="stat-label">연결된 강의자료<svg><use href="#i-book"/></svg></div><div class="stat-value" id="stat-materials">—<span>개</span></div><a class="stat-foot text-link" href="#materials">자료 관리하기 <span>↗</span></a></article>
+    </div>
+    <div class="dashboard-columns">
+      <div class="dashboard-primary">
+        <article class="panel topics-panel"><div class="panel-heading"><div><span class="eyebrow">LEARNING SIGNALS</span><h2>어떤 개념이 궁금할까요?</h2></div><span class="chip">누적 질문</span></div><p class="panel-description">질문 주제의 빈도입니다. 이해도나 성적을 직접 측정하지 않습니다.</p><div id="topic-chart" class="topic-chart loading-placeholder">질문 주제를 불러오는 중…</div><div class="chart-footer"><span class="legend-dot"></span>주제별 질문 수 <span id="topic-total"></span></div></article>
+        <article class="panel recent-panel"><div class="panel-heading"><div><span class="eyebrow">IN THEIR WORDS</span><h2>최근에 들어온 질문</h2></div><span class="muted small">최근 8건</span></div><div id="recent-questions" class="question-list loading-placeholder">최근 질문을 불러오는 중…</div></article>
+      </div>
+      <div class="dashboard-secondary">
+        <article class="insight-card"><span class="insight-icon"><svg><use href="#i-spark"/></svg></span><div class="eyebrow">FROM QUESTIONS TO TEACHING</div><h2>다음 수업의<br>힌트를 찾아보세요.</h2><p>학생들의 질문을 바탕으로<br>함께 짚어볼 개념과 설명 방향을<br>정리할 수 있어요.</p><button class="button button-teal" id="brief-button">수업 준비 도우미<svg><use href="#i-arrow"/></svg></button><div class="insight-foot">질문 근거 + 외부 LLM용 지시문</div></article>
+        <article class="panel exam-card"><div class="exam-icon"><svg><use href="#i-file"/></svg></div><h3>평가도 수업의 연장선</h3><p>강의자료와 질문 주제를 바탕으로 난이도별 시험 출제 지시문을 준비하세요.</p><button class="text-link" id="exam-button">시험 출제 준비 <span>↗</span></button><small>성적 분포를 보장하거나 예측하지 않습니다.</small></article>
+        <div class="privacy-note"><svg><use href="#i-info"/></svg><p id="analytics-notice">학생의 질문은 배움의 신호입니다. 실제 이해도를 확인하려면 퀴즈와 평가를 함께 활용하세요.</p></div>
+      </div>
+    </div>
+  </section>
+  <section class="page" id="page-materials" aria-labelledby="materials-title" hidden>
+    <div class="page-heading"><div><div class="eyebrow">THE FOUNDATION OF EVERY ANSWER</div><h1 id="materials-title">수업의 근거를 모으세요.</h1><p>등록한 강의자료를 바탕으로 질문에 필요한 내용을 찾습니다.</p></div><span class="outline-label">TXT · MD · PDF</span></div>
+    <div class="materials-layout"><article class="panel registration-panel"><div class="panel-heading"><h2>강의자료 등록</h2></div><div class="segmented" role="tablist" aria-label="등록 방식"><button class="active" id="tab-file" role="tab" aria-selected="true" aria-controls="upload-form">파일 업로드</button><button id="tab-text" role="tab" aria-selected="false" aria-controls="text-form">직접 입력</button></div>
+      <form id="upload-form" role="tabpanel" aria-labelledby="tab-file"><label class="dropzone" id="dropzone" for="material-file"><span class="upload-icon"><svg><use href="#i-upload"/></svg></span><strong id="file-label">강의자료를 선택하세요</strong><span>또는 파일을 이곳에 끌어다 놓으세요</span><small>TXT, MD, 텍스트 PDF · 최대 10 MB</small><input id="material-file" type="file" accept=".txt,.md,.pdf" required></label><label class="field-label" for="file-title">자료 제목 <span>선택</span></label><input id="file-title" placeholder="비워두면 파일 이름을 사용해요" maxlength="200"><button class="button button-dark full-width" type="submit"><svg><use href="#i-plus"/></svg>자료 등록하기</button><p class="form-note">이미지로만 된 PDF는 글자 추출이 어려울 수 있어요.</p></form>
+      <form id="text-form" role="tabpanel" aria-labelledby="tab-text" hidden><label class="field-label" for="text-title">자료 제목</label><input id="text-title" placeholder="예: 3주차 · 경사하강법" required maxlength="200"><label class="field-label" for="material-text">자료 내용</label><textarea id="material-text" rows="10" maxlength="1000000" placeholder="수업 노트나 강의 내용을 붙여 넣으세요. 제목과 본문을 함께 넣으면 근거를 찾기 좋아요." required></textarea><button class="button button-dark full-width" type="submit"><svg><use href="#i-plus"/></svg>자료 등록하기</button></form>
+      <div class="form-status" id="material-status" role="status"></div></article>
+      <article class="panel material-library"><div class="panel-heading"><div><span class="eyebrow">COURSE LIBRARY</span><h2>등록된 자료 <span class="count-badge" id="material-count">0</span></h2></div><button class="text-link" id="refresh-materials">새로고침</button></div><div id="material-list" class="material-list">자료를 불러오는 중…</div></article></div>
+  </section>
+  <section class="page" id="page-student" aria-labelledby="student-title" hidden>
+    <div class="page-heading"><div><div class="eyebrow">A QUESTION IS A GOOD BEGINNING</div><h1 id="student-title">궁금함에서 시작해 보세요.</h1><p>학생의 질문이 강의자료와 어떻게 연결되는지 체험해 보세요.</p></div><span class="outline-label">학생 질문 체험</span></div>
+    <div class="student-layout"><div><article class="panel ask-panel"><div class="ask-context"><span class="mini-logo">사이</span><div><strong id="ask-course">현재 수업</strong><span>강의자료에서 질문의 근거를 찾아요.</span></div></div><form id="ask-form"><label class="field-label" for="question-input">어떤 점이 궁금한가요?</label><textarea id="question-input" rows="5" maxlength="2000" placeholder="예: 경사하강법에서 학습률이 너무 크면 어떻게 되나요?" required></textarea><div class="question-examples"><span>이렇게 물어보세요</span><button type="button" data-question="경사하강법이 무엇인가요?">경사하강법이 뭐예요?</button><button type="button" data-question="과적합은 왜 생기고 어떻게 줄이나요?">과적합은 어떻게 줄이나요?</button></div><div class="ask-footer"><span><svg><use href="#i-info"/></svg>질문이 이 수업의 DB에 기록됩니다.</span><button class="button button-teal" type="submit">자료에서 찾기<svg><use href="#i-arrow"/></svg></button></div></form><div id="ask-status" class="form-status" role="status"></div></article><div id="answer-container" aria-live="polite"></div></div>
+      <aside class="student-guide"><div class="eyebrow">HOW IT WORKS</div><h3>익숙한 AI,<br>우리 수업의 맥락으로.</h3><ol class="flow-list"><li><span>01</span><div><strong>질문하기</strong><p>학생이 궁금한 점을 물어봐요.</p></div></li><li><span>02</span><div><strong>자료 선별하기</strong><p>MCP로 수업 자료에 연결하고, 근거가 되는 내용을 골라요.</p></div></li><li><span>03</span><div><strong>출처와 함께 설명하기</strong><p>선별된 근거를 외부 LLM에 전달해 수업에 맞는 설명을 만들어요.</p></div></li></ol><div class="guide-note">이 체험 화면은 <strong>근거 발췌 미리보기</strong>를 보여줍니다. 자연어 답변 생성은 연결한 LLM에서 이루어져요.</div><a class="text-link" href="#connect">내 AI에 연결하기 <span>↗</span></a></aside></div>
+  </section>
+  <section class="page" id="page-connect" aria-labelledby="connect-title" hidden>
+    <div class="page-heading"><div><div class="eyebrow">BRING YOUR OWN AI</div><h1 id="connect-title">수업과 AI 사이를 연결하세요.</h1><p>MCP를 지원하는 클라이언트에 연결해 수업 자료를 활용하세요.</p></div><span class="outline-label">MCP</span></div>
+    <div class="connection-status panel"><span class="connection-mark"><svg><use href="#i-link"/></svg></span><div><h2 id="connection-title">연결 상태 확인 중</h2><p id="connection-description"></p></div><span class="chip" id="mode-chip"></span></div>
+    <div class="connection-grid"><article class="panel connection-card"><div class="eyebrow">FOR STUDENTS</div><h2>학생의 AI에 연결</h2><p>수업 목록을 확인하고, 질문에 맞는 강의자료를 찾습니다. 질문은 수업별로 기록돼요.</p><label class="field-label">Streamable HTTP 주소</label><div class="copy-line"><code id="student-endpoint"></code><button class="icon-button copy-target" data-copy-target="student-endpoint" aria-label="학생 MCP 주소 복사"><svg><use href="#i-copy"/></svg></button></div><label class="field-label">표준 입출력 실행 명령</label><div class="copy-line"><code id="student-stdio">python -m classroom.mcp_server --role student</code><button class="icon-button copy-target" data-copy-target="student-stdio" aria-label="학생 실행 명령 복사"><svg><use href="#i-copy"/></svg></button></div><button class="button button-outline full-width" id="student-prompt">학생용 지시문 보기<svg><use href="#i-arrow"/></svg></button></article>
+    <article class="panel connection-card"><div class="eyebrow">FOR INSTRUCTORS</div><h2>교수의 AI에 연결</h2><p>질문 현황을 살펴보고, 보충 설명과 시험 출제를 준비합니다. 자료 등록도 가능해요.</p><label class="field-label">Streamable HTTP 주소</label><div class="copy-line"><code id="instructor-endpoint"></code><button class="icon-button copy-target" data-copy-target="instructor-endpoint" aria-label="교수 MCP 주소 복사"><svg><use href="#i-copy"/></svg></button></div><label class="field-label">표준 입출력 실행 명령</label><div class="copy-line"><code id="instructor-stdio">python -m classroom.mcp_server --role instructor</code><button class="icon-button copy-target" data-copy-target="instructor-stdio" aria-label="교수 실행 명령 복사"><svg><use href="#i-copy"/></svg></button></div><button class="button button-outline full-width" id="instructor-prompt">교수용 지시문 보기<svg><use href="#i-arrow"/></svg></button></article></div>
+    <article class="panel setup-notes"><h3>연결 전에 확인하세요</h3><div class="setup-note-grid"><div><span>01</span><h4>같은 컴퓨터에서 실행</h4><p>이 주소는 로컬 서버용입니다. 원격 커넥터에서는 직접 접근할 수 없으며, 클라이언트의 로컬 MCP 지원을 확인해야 해요.</p></div><div><span>02</span><h4>Jev API 또는 Codex CLI로 판단</h4><p>서버의 .env에서 CLASSROOM_MODE=auto를 설정하세요. TYPESAFE_API_KEY가 있으면 Jev를 사용하며, JEV_MODEL의 기본값은 jev-latest입니다. 키가 없으면 설치된 Codex CLI, 둘 다 없으면 데모 검색을 사용합니다. jev·codex·demo 모드로 직접 지정할 수도 있어요. 변경 후 서버를 재시작하세요. API 키는 서버에만 보관하고, Codex는 서버 컴퓨터에서 로그인하세요.</p></div><div><span>03</span><h4>교수 도구는 교수에게</h4><p>이 프로토타입에는 로그인이 없습니다. 역할별 주소는 인증 경계가 아니므로 신뢰할 수 있는 로컬 환경에서 체험하세요.</p></div></div></article>
+  </section>
+  <footer class="page-footer"><span>수업 사이 <span class="footer-dot">·</span> 질문으로 이어지는 배움</span><span>CLASSROOM BRIDGE / PROTOTYPE</span></footer>
+  </div>
+</main>
+</div>
+<dialog id="app-dialog"><div class="dialog-top"><div><span class="eyebrow" id="dialog-eyebrow"></span><h2 id="dialog-title"></h2></div><button class="icon-button" id="close-dialog" aria-label="닫기"><svg><use href="#i-close"/></svg></button></div><div id="dialog-content"></div></dialog>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

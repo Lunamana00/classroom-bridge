@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "classroom-instructor": {
+      "command": "/ABSOLUTE/PATH/classroom-bridge/.venv/bin/python",
+      "args": ["-m", "classroom.mcp_server", "--role", "instructor"],
+      "env": {
+        "CLASSROOM_DB": "/ABSOLUTE/PATH/classroom-bridge/data/classroom.sqlite"
+      }
+    }
+  }
+}
