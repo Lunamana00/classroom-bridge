@@ -2,7 +2,7 @@
 # The client reviews tool use; search_course_materials records the question
 # and uses the configured Codex, Jev, or lexical demo evidence selector.
 [mcp_servers.classroom_student]
-url = "http://127.0.0.1:8000/mcp/student"
+url = "https://canigetbus.app/mcp/student"
 tool_timeout_sec = 150
 default_tools_approval_mode = "auto"
 enabled_tools = ["list_courses", "search_course_materials"]

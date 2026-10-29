@@ -1,0 +1,25 @@
+[Unit]
+Description=Classroom Bridge web application
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=classroom-bridge
+Group=classroom-bridge
+WorkingDirectory=/srv/classroom-bridge/current
+EnvironmentFile=/etc/classroom-bridge.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/srv/classroom-bridge/venv/bin/python -m classroom --port 8000
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/classroom-bridge
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

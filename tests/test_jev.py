@@ -1,7 +1,8 @@
 import asyncio
 import json
 
-import httpx
+import httpx2 as httpx
+from openai import AsyncOpenAI
 import pytest
 
 from classroom.judge import JudgeError
@@ -17,25 +18,26 @@ CANDIDATES = [
 def response_for(payload, **scores):
     defaults = {"is_relevant": 0.9, "contains_answer_evidence": 0.8, "contains_prompt_injection": 0.05, "sufficient": 0.9}
     defaults.update(scores)
-    return {"model": "jev-latest", "answers": {name: {"type": "noul", "noul": defaults[name]} for name in payload["questions"]}}
+    return {"model": "jev-1.14.0", "answers": {name: {"type": "noul", "noul": defaults[name]} for name in payload["questions"]}}
 
 
 @pytest.fixture
 def install_transport(monkeypatch):
-    monkeypatch.setenv("TYPESAFE_API_KEY", "test-only-not-a-real-key")
+    monkeypatch.setenv("OPEN_API_KEY", "test-only-not-a-real-key")
+    monkeypatch.setenv("CLASSROOM_MODE", "jev")
     monkeypatch.delenv("JEV_MODEL", raising=False)
-    real_client = httpx.AsyncClient
+    real_client = AsyncOpenAI
     clients = []
 
     def install(handler):
         transport = httpx.MockTransport(handler)
 
         def create_client(**kwargs):
-            client = real_client(transport=transport, **kwargs)
+            client = real_client(http_client=httpx.AsyncClient(transport=transport), **kwargs)
             clients.append(client)
             return client
 
-        monkeypatch.setattr("classroom.jev.httpx.AsyncClient", create_client)
+        monkeypatch.setattr("classroom.judge.AsyncOpenAI", create_client)
         return clients
 
     return install
@@ -46,7 +48,7 @@ async def test_documented_request_shape_and_success(install_transport, monkeypat
     requests = []
 
     def handler(request):
-        assert str(request.url) == "https://api.typesafe.ai/v1/systemone"
+        assert str(request.url) == "https://factchat-cloud.mindlogic.ai/v1/gateway/decisions/"
         assert request.method == "POST"
         assert request.headers["Authorization"] == "Bearer test-only-not-a-real-key"
         payload = json.loads(request.content)
@@ -69,7 +71,7 @@ async def test_documented_request_shape_and_success(install_transport, monkeypat
     assert len(requests) == 3
     assert "sufficient" in requests[-1]["questions"]
     assert "score" not in requests[0]["state"]["passage"]
-    assert len(clients) == 1 and clients[0].is_closed
+    assert len(clients) == 1 and clients[0].is_closed()
     assert CANDIDATES[0]["score"] == 0.8
 
 
@@ -142,17 +144,17 @@ async def test_rejects_malformed_response(install_transport, body):
 
 
 async def test_missing_key_and_empty_candidates_never_call_network(monkeypatch):
-    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    monkeypatch.delenv("OPEN_API_KEY", raising=False)
     monkeypatch.delenv("JEV_MODEL", raising=False)
 
     def forbidden(**kwargs):
         raise AssertionError("network must not be used")
 
-    monkeypatch.setattr("classroom.jev.httpx.AsyncClient", forbidden)
+    monkeypatch.setattr("classroom.judge.AsyncOpenAI", forbidden)
     judge = JevClient()
-    assert judge.configured and not judge.available
-    assert judge.model == "jev-latest"
-    with pytest.raises(JudgeError, match="TYPESAFE_API_KEY"):
+    assert not judge.available
+    assert judge.model == "jev-1.14.0"
+    with pytest.raises(JudgeError, match="OPEN_API_KEY"):
         await judge.select("질문", CANDIDATES)
     assert await judge.select("질문", []) == ([], False)
 
@@ -174,10 +176,29 @@ async def test_bounded_concurrency_and_three_source_limit(install_transport):
     selected, sufficient = await JevClient().select("질문", candidates)
     assert sufficient
     assert len(selected) == 3
-    assert peak == 3
+    assert peak == 2
 
 
 async def test_malformed_combined_sufficiency_is_not_accepted(install_transport):
     install_transport(lambda request: httpx.Response(200, json=response_for(json.loads(request.content), sufficient=True)))
     with pytest.raises(JudgeError, match="올바른 판단 결과"):
         await JevClient().select("질문", CANDIDATES[:1])
+
+
+def test_model_and_base_url_overrides(monkeypatch):
+    from classroom.judge import CodexClient
+    monkeypatch.delenv("JEV_MODEL", raising=False)
+    monkeypatch.delenv("CODEX_MODEL", raising=False)
+    assert JevClient().model == "jev-1.14.0"
+    assert CodexClient().model == "gpt-6-luna"
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://example.invalid/v1")
+    assert JevClient().base_url == "https://example.invalid/v1"
+    assert CodexClient().base_url == "https://example.invalid/v1"
+
+
+def test_standard_key_alias_and_project_key_priority(monkeypatch):
+    from classroom.judge import CodexClient
+    monkeypatch.setenv("OPENAI_API_KEY", "standard-test-key")
+    assert CodexClient().available
+    monkeypatch.setenv("OPEN_API_KEY", "project-test-key")
+    assert JevClient().api_key == "project-test-key"

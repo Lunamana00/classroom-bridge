@@ -8,3 +8,10 @@
 
 /* Comfortable reading sizes for the desktop teaching workspace. */
 @media(min-width:761px){.nav a{font-size:13px}.page-heading p{font-size:12px}.stat-label{font-size:11px}.stat-foot,.stat-foot.text-link{font-size:9px}.panel-description{font-size:10px}.question-text{font-size:12px}.question-meta{font-size:9px}.question-badge{font-size:8px}.topic-name,.topic-number{font-size:11px}.chart-footer{font-size:9px}.course-pill{font-size:11px}.context-date{font-size:10px}.eyebrow{font-size:9px}.insight-card .eyebrow{font-size:6px}.insight-card p,.exam-card p{font-size:11px}.exam-card small{font-size:8px}.privacy-note p{font-size:9px}.field-label{font-size:12px}.form-note{font-size:10px}.connection-card>p{font-size:12px}.copy-line code{font-size:11px}.material-title{font-size:13px}.material-preview{font-size:11px}.material-meta{font-size:9px}.flow-list p,.guide-note{font-size:11px}.answer-summary{font-size:13px}.evidence-text{font-size:12px}.answer-label,.evidence-meta{font-size:10px}.prompt-text,.source-chunk pre{font-size:12px}.setup-note-grid p{font-size:11px}}
+
+.login-layout {min-height:100vh;display:grid;place-items:center;padding:24px}
+.login-card {max-width:440px;width:100%;padding:48px;display:grid;gap:20px}
+.login-card p {line-height:1.8}
+.login-card small {color:#65736d;line-height:1.7}
+.account-actions {display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:18px}
+.student-mode [data-teacher-only] {display:none!important}

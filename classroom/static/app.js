@@ -1,20 +1,22 @@
 'use strict';
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
-const state = {config: null, courses: [], courseId: null, materials: [], analytics: null, version: 0, prompt: '', dialogToken: 0};
+const state = {auth: null, config: null, courses: [], courseId: null, materials: [], analytics: null, version: 0, prompt: '', dialogToken: 0};
 const pageTitles = {dashboard: '수업 현황', materials: '강의자료', student: '학생 질문 체험', connect: 'AI 연결'};
 const escapeHTML = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[char]));
 const icon = name => `<svg aria-hidden="true"><use href="#i-${name}"/></svg>`;
 const course = () => state.courses.find(item => Number(item.id) === state.courseId);
 const number = value => Number(value || 0).toLocaleString('ko-KR');
-const modeLabel = mode => ({jev: 'Jev API 판단', codex: 'Codex CLI 판단', demo: '데모 · 단어 기반 검색'}[mode] || '검색 모드 확인 필요');
+const modeLabel = mode => ({jev: 'OpenAI API 판단', codex: 'OpenAI API 판단', demo: '데모 · 단어 기반 검색'}[mode] || '검색 모드 확인 필요');
 function readableDate(value) {
   if (!value) return '';
   const parsed = new Date(/(?:Z|[+-]\d\d:\d\d)$/.test(value) ? value : `${value}Z`);
   return Number.isNaN(parsed.getTime()) ? String(value).slice(0, 10) : new Intl.DateTimeFormat('ko-KR', {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Seoul'}).format(parsed);
 }
 async function api(path, options = {}) {
-  const response = await fetch(path, {headers: options.body && !(options.body instanceof FormData) ? {'Content-Type': 'application/json'} : {}, ...options});
+  const headers = {...(options.body && !(options.body instanceof FormData) ? {'Content-Type': 'application/json'} : {}), ...(state.auth?.csrf_token ? {'X-CSRF-Token': state.auth.csrf_token} : {}), ...options.headers};
+  const response = await fetch(path, {...options, headers});
+  if (response.status === 401) { location.assign('/'); throw new Error('다시 로그인해 주세요.'); }
   let data;
   try { data = await response.json(); } catch { throw new Error('서버 응답을 읽지 못했어요. 서버 연결을 확인해 주세요.'); }
   if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : '요청을 처리하지 못했어요. 입력 내용을 확인해 주세요.');
@@ -45,7 +47,8 @@ async function busy(button, task, label = '불러오는 중…') {
 }
 function route() {
   const requested = location.hash.slice(1);
-  const page = pageTitles[requested] ? requested : 'dashboard';
+  let page = pageTitles[requested] ? requested : 'dashboard';
+  if (state.auth && !isTeacher() && page === 'dashboard') page = 'student';
   $$('.page').forEach(element => { element.hidden = element.id !== `page-${page}`; element.classList.toggle('active', !element.hidden); });
   $$('.nav a').forEach(element => { const active = element.dataset.page === page; element.classList.toggle('active', active); active ? element.setAttribute('aria-current','page') : element.removeAttribute('aria-current'); });
   $('#breadcrumb-title').textContent = pageTitles[page];
@@ -57,34 +60,37 @@ function setMenu(open) {
   $('#sidebar-shade').classList.toggle('visible', open);
   $('#menu-button').setAttribute('aria-expanded', String(open));
 }
+const isTeacher = () => course()?.role === 'teacher' && state.auth?.can_create_course;
+function updateAccess() {
+  document.body.classList.toggle('student-mode', !isTeacher());
+  $('#new-course').hidden = !state.auth?.can_create_course;
+  $('#account-name').textContent = state.auth?.user?.name || '';
+  $('#account-email').textContent = state.auth?.user?.email || '';
+  $('#course-role').textContent = isTeacher() ? '담당 교수' : '학생';
+  route();
+}
 function updateCourseLabels() {
   const current = course();
   ['#dashboard-course', '#course-pill-title', '#ask-course'].forEach(selector => { $(selector).textContent = current?.title || '수업을 선택하세요'; });
   $('#demo-data-label').textContent = current?.is_demo ? '예시 수업 · 데모 질문 포함' : '';
   $('#course-select').value = state.courseId;
+  updateAccess();
 }
 function renderConfig() {
   const config = state.config;
   const provider = {
-    jev: {
-      label: config.jev_configured ? 'Jev API 사용' : 'Jev API 설정 필요',
-      banner: 'Jev API로 강의자료의 관련성과 근거 충분성을 판단하도록 설정되어 있어요. 답변 생성은 연결한 LLM이 맡습니다.',
-      title: config.jev_configured ? 'Jev API가 설정되어 있어요.' : 'Jev API 키를 설정해 주세요.',
-      description: config.jev_configured ? '서버에서 API 키 설정을 확인했습니다. 인증과 실제 요청 성공 여부는 질문 체험에서 확인할 수 있어요.' : '서버의 .env 파일에 TYPESAFE_API_KEY를 설정하고 서버를 재시작하세요.',
-      chip: config.jev_configured ? 'JEV 설정됨' : 'JEV 설정 필요'
-    },
-    codex: {
-      label: 'Codex CLI 사용',
-      banner: 'Codex CLI로 강의자료의 관련성과 근거 충분성을 판단하도록 설정되어 있어요. 답변 생성은 연결한 LLM이 맡습니다.',
-      title: config.codex_available ? 'Codex CLI 실행 경로를 확인했어요.' : 'Codex CLI를 설치해 주세요.',
-      description: config.codex_available ? '서버에서 Codex CLI를 사용할 수 있습니다. 로그인과 실제 호출 결과는 질문 체험에서 확인할 수 있어요.' : '서버가 실행되는 컴퓨터에 Codex CLI를 설치하고 로그인한 뒤 서버를 재시작하세요.',
-      chip: 'CODEX CLI'
-    },
+    ...Object.fromEntries(['jev', 'codex'].map(mode => [mode, {
+      label: config.codex_available ? 'OpenAI API 사용' : 'OpenAI API 설정 필요',
+      banner: 'OpenAI API로 강의자료의 관련성과 근거 충분성을 판단하도록 설정되어 있어요. 답변 생성은 연결한 LLM이 맡습니다.',
+      title: config.codex_available ? 'OpenAI API 키가 설정되어 있어요.' : 'OpenAI API 키를 설정해 주세요.',
+      description: config.codex_available ? '서버에서 API 키 설정을 확인했습니다. 인증과 모델 접근 권한은 질문 체험에서 확인할 수 있어요.' : '서버의 .env.local 파일에 OPEN_API_KEY를 설정하고 서버를 재시작하세요.',
+      chip: 'OPENAI API'
+    }])),
     demo: {
       label: '데모 검색 모드',
       banner: '데모 모드 · 단어 기반 검색으로 체험합니다. 생성형 답변 대신 자료의 근거를 발췌해 보여줘요.',
       title: '데모 검색 모드로 체험 중이에요.',
-      description: '현재 단어 기반 검색을 사용합니다. 서버에서 Jev API 키를 설정하거나 Codex CLI를 설치·로그인하면 모델 기반 판단을 사용할 수 있어요.',
+      description: '현재 단어 기반 검색을 사용합니다. 서버의 .env.local에 OPEN_API_KEY를 설정하면 모델 기반 판단을 사용할 수 있어요.',
       chip: 'DEMO'
     }
   }[config.mode];
@@ -96,8 +102,8 @@ function renderConfig() {
   $('#mode-chip').textContent = provider.chip;
   $('#student-endpoint').textContent = `${location.origin}${config.student_mcp}`;
   $('#instructor-endpoint').textContent = `${location.origin}${config.instructor_mcp}`;
-  $('#student-stdio').textContent = config.student_stdio || 'python3 -m classroom.mcp_server --role student';
-  $('#instructor-stdio').textContent = config.instructor_stdio || 'python3 -m classroom.mcp_server --role instructor';
+  $('#student-stdio').textContent = 'Google 로그인 → 권한 확인 → 연결 승인';
+  $('#instructor-stdio').textContent = 'Google 로그인 → 권한 확인 → 연결 승인';
 }
 async function reloadCourses(selectId) {
   const data = await api('/api/courses');
@@ -116,19 +122,20 @@ async function refreshCourse() {
   clearError($('#ask-status'));
   clearError($('#material-status'));
   updateCourseLabels();
-  if (!courseId) { $('#global-error').textContent = '먼저 새 수업을 만들어 주세요.'; $('#global-error').hidden = false; return; }
+  if (!courseId) { $('#global-error').textContent = state.auth?.can_create_course ? '새 수업을 만들어 주세요.' : '교수에게 받은 초대 링크로 수업에 참여해 주세요.'; $('#global-error').hidden = false; return; }
   $('#recent-questions').innerHTML = '<div class="empty-state">질문을 불러오는 중…</div>';
   $('#topic-chart').innerHTML = '<div class="empty-state">질문 주제를 불러오는 중…</div>';
   $('#material-list').innerHTML = '<div class="empty-state">자료를 불러오는 중…</div>';
-  const results = await Promise.allSettled([api(`/api/courses/${courseId}/analytics`), api(`/api/courses/${courseId}/materials`)]);
+  const results = await Promise.allSettled([isTeacher() ? api(`/api/courses/${courseId}/analytics`) : Promise.resolve(null), api(`/api/courses/${courseId}/materials`)]);
   if (version !== state.version) return;
   results.forEach((result, index) => {
     if (result.status === 'rejected') { errorMessage(result.reason); if (index === 0) {$('#recent-questions').textContent = '질문 현황을 불러오지 못했어요.'; $('#topic-chart').textContent = '질문 주제를 불러오지 못했어요.';} else $('#material-list').textContent = '자료를 불러오지 못했어요.'; return; }
-    if (index === 0) { state.analytics = result.value; renderAnalytics(); }
-    else { state.materials = result.value.materials; renderMaterials(); }
+    if (index === 0 && result.value) { state.analytics = result.value; renderAnalytics(); }
+    else if (index === 1) { state.materials = result.value.materials; renderMaterials(); }
   });
 }
 async function refreshAnalytics() {
+  if (!isTeacher()) return;
   const version = state.version;
   const data = await api(`/api/courses/${state.courseId}/analytics`);
   if (version !== state.version) return;
@@ -151,7 +158,7 @@ function renderAnalytics() {
 }
 function renderMaterials() {
   $('#material-count').textContent = number(state.materials.length);
-  $('#material-list').innerHTML = state.materials.length ? state.materials.map(item => `<div class="material-item"><span class="material-icon">${icon('file')}</span><div class="material-details"><button class="material-title" data-view-material="${Number(item.id)}">${escapeHTML(item.title)}</button><p class="material-preview">${escapeHTML(item.preview)}</p><div class="material-meta">${escapeHTML(item.filename || '직접 입력')} · ${number(item.chunk_count)}개 구간 · ${escapeHTML(readableDate(item.created_at))}</div></div><button class="icon-button" data-delete-material="${Number(item.id)}" aria-label="${escapeHTML(item.title)} 삭제">${icon('trash')}</button></div>`).join('') : '<div class="empty-state"><strong>수업의 첫 자료를 등록해 보세요.</strong>강의 노트, 텍스트 파일, PDF를 연결할 수 있어요.</div>';
+  $('#material-list').innerHTML = state.materials.length ? state.materials.map(item => `<div class="material-item"><span class="material-icon">${icon('file')}</span><div class="material-details"><button class="material-title" data-view-material="${Number(item.id)}">${escapeHTML(item.title)}</button><p class="material-preview">${escapeHTML(item.preview)}</p><div class="material-meta">${escapeHTML(item.filename || '직접 입력')} · ${number(item.chunk_count)}개 구간 · ${escapeHTML(readableDate(item.created_at))}</div></div><button data-teacher-only class="icon-button" data-delete-material="${Number(item.id)}" aria-label="${escapeHTML(item.title)} 삭제">${icon('trash')}</button></div>`).join('') : '<div class="empty-state"><strong>수업의 첫 자료를 등록해 보세요.</strong>강의 노트, 텍스트 파일, PDF를 연결할 수 있어요.</div>';
 }
 function showDialog(title, content, eyebrow = 'CLASSROOM BRIDGE') {
   state.dialogToken++;
@@ -268,7 +275,7 @@ async function askQuestion(event) {
   clearError($('#ask-status'));
   $('#answer-container').replaceChildren();
   await busy($('#ask-form button[type="submit"]'), async () => {
-    $('#ask-status').textContent = {jev: 'Jev API에 강의자료의 관련성 판단을 요청하고 있어요. 잠시 기다려 주세요.', codex: 'Codex CLI가 강의자료를 살펴보고 있어요. 잠시 기다려 주세요.', demo: '질문과 관련된 강의자료를 단어 기반으로 찾고 있어요.'}[state.config?.mode] || '질문과 관련된 강의자료를 찾고 있어요.';
+    $('#ask-status').textContent = {jev: 'OpenAI API에 강의자료의 관련성 판단을 요청하고 있어요. 잠시 기다려 주세요.', codex: 'OpenAI API가 강의자료를 살펴보고 있어요. 잠시 기다려 주세요.', demo: '질문과 관련된 강의자료를 단어 기반으로 찾고 있어요.'}[state.config?.mode] || '질문과 관련된 강의자료를 찾고 있어요.';
     try {
       const data = await api('/api/ask',{method:'POST',body:JSON.stringify({course_id:courseId, question})});
       if (version !== state.version) {toast('이전에 선택한 수업에서 질문 처리를 마쳤어요.'); return;}
@@ -325,6 +332,23 @@ function bindEvents() {
   $('#sidebar-shade').addEventListener('click', () => setMenu(false));
   $('#course-select').addEventListener('change', async event => { state.courseId = Number(event.target.value); closeDialog(); await refreshCourse(); });
   $('#new-course').addEventListener('click', newCourseDialog);
+  $('#oauth-connections').addEventListener('click', async event => { try { await busy(event.currentTarget, async () => {
+    const result = await api('/api/oauth/connections');
+    showDialog('AI 연결 관리', result.connections.length ? result.connections.map(connection => `<div class="question-row"><div>${escapeHTML(connection.client_name || 'MCP 클라이언트')}<small> · ${connection.resource.endsWith('/instructor') ? '교수' : '학생'} 도구</small></div><button class="button" data-revoke-connection="${escapeHTML(connection.id)}">연결 해제</button></div>`).join('') : '<p>아직 승인한 MCP 연결이 없습니다.</p>');
+    $$('[data-revoke-connection]').forEach(button => { button.onclick = async () => { await api(`/api/oauth/connections/${encodeURIComponent(button.dataset.revokeConnection)}`, {method: 'DELETE'}); button.closest('.question-row').remove(); toast('AI 연결 권한을 해제했어요.'); }; });
+  }); } catch(error) { errorMessage(error); } });
+  $('#logout-button').addEventListener('click', async () => { await api('/auth/logout', {method: 'POST'}); location.assign('/'); });
+  $('#invite-button').addEventListener('click', async event => { try { await busy(event.currentTarget, async () => {
+    const result = await api(`/api/courses/${state.courseId}/invite`, {method: 'POST'});
+    showDialog('학생 초대 링크', `<p>7일 동안 유효합니다. 새 링크를 만들면 이전 링크는 폐기됩니다.</p><input id="invite-url" readonly value="${escapeHTML(result.url)}"><button id="copy-invite" class="button button-dark">링크 복사</button><button id="revoke-invite" class="button">링크 폐기</button>`);
+    $('#copy-invite').onclick = () => copyText(result.url);
+    $('#revoke-invite').onclick = async () => { await api(`/api/courses/${state.courseId}/invite`, {method: 'DELETE'}); closeDialog(); toast('초대 링크를 폐기했어요.'); };
+  }); } catch(error) { errorMessage(error); } });
+  $('#members-button').addEventListener('click', async event => { try { await busy(event.currentTarget, async () => {
+    const result = await api(`/api/courses/${state.courseId}/members`);
+    showDialog('수업 참여자', '<p>학생을 제외하면 현재 초대 링크도 폐기됩니다. 다시 초대하려면 새 링크를 만들어 주세요.</p>' + result.members.map(user => `<div class="question-row"><div>${escapeHTML(user.name)}<small> · ${escapeHTML(user.email)}</small></div>${user.role === 'student' ? `<button class="button" data-remove-user="${Number(user.id)}">참여 제외</button>` : '<span>담당 교수</span>'}</div>`).join(''));
+    $$('[data-remove-user]').forEach(button => { button.onclick = async () => { await api(`/api/courses/${state.courseId}/members/${button.dataset.removeUser}`, {method: 'DELETE'}); button.closest('.question-row').remove(); }; });
+  }); } catch(error) { errorMessage(error); } });
   $('#close-dialog').addEventListener('click', closeDialog);
   $('#app-dialog').addEventListener('cancel', () => { state.dialogToken++; });
   $('#app-dialog').addEventListener('click', event => { const bounds = event.currentTarget.getBoundingClientRect(); if (event.target === event.currentTarget && (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom)) closeDialog(); });
@@ -358,6 +382,18 @@ async function init() {
   setUploadTab('file');
   $('#today-label').textContent = new Intl.DateTimeFormat('ko-KR',{year:'numeric',month:'long',day:'numeric',timeZone:'Asia/Seoul'}).format(new Date());
   try {
+    state.auth = await api('/api/auth/me');
+    if (!state.auth.user) { location.assign('/'); return; }
+    const incomingInvite = location.hash.startsWith('#join=') ? location.hash.slice(6) : sessionStorage.getItem('classroom-invite');
+    if (incomingInvite) {
+      try {
+        await api('/api/join', {method: 'POST', body: JSON.stringify({token: incomingInvite})});
+        toast('수업에 참여했어요.');
+      } catch(error) { errorMessage(error); }
+      sessionStorage.removeItem('classroom-invite');
+      history.replaceState(null, '', '/#student');
+    }
+    updateAccess();
     const configPromise = api('/api/config').then(config => {state.config=config;renderConfig();});
     const results = await Promise.allSettled([configPromise, reloadCourses()]);
     results.forEach(result => {if(result.status === 'rejected') errorMessage(result.reason);});

@@ -1,36 +1,30 @@
 import json
 import sqlite3
 
-import httpx
+import httpx2 as httpx
+from openai import AsyncOpenAI
 import pytest
-from fastapi.testclient import TestClient
+from conftest import authenticated_client as TestClient
 
 from classroom.app import create_app
 from classroom.judge import CodexClient, create_judge
 from classroom.service import Service
 
 
-@pytest.mark.parametrize("mode,key,cli,expected", [
-    ("auto", "test-key", True, "jev"),
-    ("auto", "test-key", False, "jev"),
-    ("auto", "", True, "codex"),
-    ("auto", "  ", False, "demo"),
-    ("codex", "test-key", True, "codex"),
-    ("codex", "test-key", False, "codex"),
-    ("demo", "test-key", True, "demo"),
-    ("jev", "", True, "jev"),
-    (" JEV ", "test-key", False, "jev"),
+@pytest.mark.parametrize("mode,key,expected", [
+    ("auto", "test-key", "codex"), ("auto", "", "demo"),
+    ("codex", "test-key", "codex"), ("codex", "", "codex"),
+    ("demo", "test-key", "demo"), ("jev", "", "jev"), (" JEV ", "test-key", "jev"),
 ])
-def test_provider_selection_and_public_config(tmp_path, monkeypatch, mode, key, cli, expected):
+def test_provider_selection_and_public_config(tmp_path, monkeypatch, mode, key, expected):
     monkeypatch.setenv("CLASSROOM_MODE", mode)
-    monkeypatch.setenv("TYPESAFE_API_KEY", key)
+    monkeypatch.setenv("OPEN_API_KEY", key)
     monkeypatch.setenv("JEV_MODEL", "jev-test")
-    monkeypatch.setattr("classroom.judge.shutil.which", lambda _: "/test/codex" if cli else None)
     service = Service(str(tmp_path / "test.sqlite"), seed=False)
     config = service.config()
     assert config["mode"] == expected
     assert config["codex_configured"] is (expected == "codex")
-    assert config["codex_available"] is cli
+    assert config["codex_available"] is bool(key.strip())
     assert config["jev_configured"] is bool(key.strip())
     assert "test-key" not in json.dumps(config)
     if expected == "jev":
@@ -45,9 +39,9 @@ def test_invalid_mode_is_rejected(monkeypatch):
 
 @pytest.fixture
 def jev_app(tmp_path, monkeypatch):
-    monkeypatch.setenv("CLASSROOM_MODE", "auto")
-    monkeypatch.setenv("TYPESAFE_API_KEY", "test-private-key")
-    monkeypatch.setenv("JEV_MODEL", "jev-latest")
+    monkeypatch.setenv("CLASSROOM_MODE", "jev")
+    monkeypatch.setenv("OPEN_API_KEY", "test-private-key")
+    monkeypatch.setenv("JEV_MODEL", "jev-1.14.0")
 
     async def codex_must_not_run(*args):
         raise AssertionError("Jev must not fall back to Codex")
@@ -57,9 +51,9 @@ def jev_app(tmp_path, monkeypatch):
 
 
 def mock_jev(monkeypatch, handler):
-    original = httpx.AsyncClient
-    monkeypatch.setattr("classroom.jev.httpx.AsyncClient", lambda **kwargs: original(
-        transport=httpx.MockTransport(handler), **kwargs
+    original = AsyncOpenAI
+    monkeypatch.setattr("classroom.judge.AsyncOpenAI", lambda **kwargs: original(
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)), **kwargs
     ))
 
 
@@ -95,6 +89,7 @@ def test_jev_http_flow_preserves_sources_and_persists_mode(jev_app, monkeypatch)
         assert stats["real_questions"] == 1
         assert stats["recent_questions"][0]["mode"] == "jev"
     assert calls[-1]["questions"].keys() == {"sufficient"}
+    assert calls[0]["model"] == "jev-1.14.0"
     with sqlite3.connect(jev_app.state.service.db_path) as db:
         row = db.execute("SELECT mode,evidence_json FROM questions WHERE id=?", (result["question_id"],)).fetchone()
         assert row[0] == "jev" and json.loads(row[1]) == result["evidence"]
@@ -129,10 +124,10 @@ def test_demo_makes_no_provider_calls_even_with_key(jev_app, monkeypatch, tmp_pa
 
 def test_forced_jev_without_key_returns_configuration_error(tmp_path, monkeypatch):
     monkeypatch.setenv("CLASSROOM_MODE", "jev")
-    monkeypatch.setenv("TYPESAFE_API_KEY", "")
+    monkeypatch.setenv("OPEN_API_KEY", "")
     with TestClient(create_app(str(tmp_path / "missing-key.sqlite"))) as client:
         assert client.get("/api/config").json()["jev_configured"] is False
         response = client.post("/api/ask", json={"course_id": 1, "question": "경사하강법이 뭐야?"})
         assert response.status_code == 502
-        assert "TYPESAFE_API_KEY" in response.json()["detail"]
+        assert "OPEN_API_KEY" in response.json()["detail"]
         assert client.get("/api/courses/1/analytics").json()["real_questions"] == 0

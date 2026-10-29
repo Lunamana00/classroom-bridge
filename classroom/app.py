@@ -2,25 +2,28 @@
 
 import io
 import os
-import shlex
-import sys
 from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 
-from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from pypdf import PdfReader
-from starlette.applications import Starlette
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.middleware.cors import CORSMiddleware
 
+from classroom.config import load_environment
 from classroom.mcp_server import ROOT, create_mcp, database_path
+from classroom.oauth import MCPOAuth, SCOPES
+from mcp.server.auth.routes import create_protected_resource_routes
+from pydantic import AnyHttpUrl
+from starlette.routing import Route
 from classroom.service import Service
 from classroom.judge import JudgeError
+from classroom.auth import Auth
 
 MAX_UPLOAD = 10 * 1024 * 1024
 MAX_TEXT = 1_000_000
@@ -87,31 +90,71 @@ def parse_document(filename: str, content: bytes) -> tuple[str, list[tuple[int, 
 
 
 def create_app(db_path: str | None = None, seed: bool = True) -> FastAPI:
-    load_dotenv(ROOT / ".env")
+    load_environment()
     service = Service(db_path or database_path(), seed=seed)
-    student = create_mcp(service, "student")
-    instructor = create_mcp(service, "instructor")
-    student_http = student.streamable_http_app()
-    instructor_http = instructor.streamable_http_app()
+    auth = Auth(service)
+    async def course_permission(request: Request):
+        if not request.url.path.startswith("/api/"):
+            return
+        user = request.state.user
+        if request.url.path == "/api/courses" and request.method == "POST":
+            if user["email"] not in auth.teacher_emails:
+                raise HTTPException(403, "수업 생성은 등록된 교수만 가능합니다.")
+        course_id = request.path_params.get("course_id")
+        if request.url.path == "/api/ask":
+            data = await request.json()
+            course_id = data.get("course_id") if isinstance(data, dict) else None
+            if not isinstance(course_id, int) or isinstance(course_id, bool) or course_id <= 0:
+                raise HTTPException(422, "수업 ID를 확인해 주세요.")
+        if course_id is not None:
+            teacher = request.url.path != "/api/ask" and not (request.method == "GET" and "/materials" in request.url.path)
+            auth.require_course(user, course_id, teacher=teacher)
+
+    app = FastAPI(title="수업 사이 · Classroom Bridge", dependencies=[Depends(course_permission)])
+    app.state.service = service
+    app.state.auth = auth
+    auth.install(app)
+    oauth = MCPOAuth(auth)
+    app.state.mcp_oauth = oauth
+    oauth.install(app)
+    servers = []
+    for role in ("student", "instructor"):
+        server = create_mcp(service, role, oauth)
+        servers.append(server)
+        # Forward to the complete SDK ASGI app, retaining its authentication
+        # middleware instead of copying unwrapped transport routes.
+        transport = CORSMiddleware(
+            server.streamable_http_app(), allow_origins=auth.mcp_origins,
+            allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+            allow_headers=["Authorization", "Content-Type", "MCP-Protocol-Version", "Mcp-Session-Id", "Last-Event-ID"],
+            expose_headers=["WWW-Authenticate", "Mcp-Session-Id", "MCP-Protocol-Version"],
+            allow_credentials=False,
+        )
+        app.router.routes.append(Route(f"/mcp/{role}", transport, methods=["GET", "POST", "DELETE", "OPTIONS"]))
+        app.router.routes.extend(create_protected_resource_routes(
+            resource_url=AnyHttpUrl(auth.base_url + "/mcp/" + role),
+            authorization_servers=[AnyHttpUrl(auth.base_url)], scopes_supported=[SCOPES[role]],
+        ))
 
     @asynccontextmanager
     async def lifespan(app):
         async with AsyncExitStack() as stack:
-            await stack.enter_async_context(student.session_manager.run())
-            await stack.enter_async_context(instructor.session_manager.run())
+            for server in servers:
+                await stack.enter_async_context(server.session_manager.run())
             yield
-
-    app = FastAPI(title="수업 사이 · Classroom Bridge", lifespan=lifespan)
-    app.state.service = service
-    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "[::1]", "testserver"])
+    app.router.lifespan_context = lifespan
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "[::1]", "testserver", auth.hostname])
 
     @app.middleware("http")
-    async def local_origin(request: Request, call_next):
-        # This prototype is a loopback-only instructor workspace.
+    async def browser_origin(request: Request, call_next):
         origin = request.headers.get("origin")
-        if origin and request.method not in {"GET", "HEAD", "OPTIONS"}:
-            from urllib.parse import urlparse
-            if urlparse(origin).netloc != request.headers.get("host"):
+        path = request.url.path.rstrip("/")
+        browser_mutation = path.startswith("/api/") or path == "/auth/logout"
+        # Redirect chains can produce an opaque Origin on the consent form.
+        # That route independently requires the signed-in user's CSRF token.
+        consent_with_origin = path == "/oauth/consent" and origin != "null"
+        if origin and request.method not in {"GET", "HEAD", "OPTIONS"} and (browser_mutation or consent_with_origin):
+            if origin != str(request.base_url).rstrip("/"):
                 return JSONResponse({"detail": "같은 주소의 수업 화면에서 요청해주세요."}, status_code=403)
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
@@ -137,17 +180,17 @@ def create_app(db_path: str | None = None, seed: bool = True) -> FastAPI:
     def config():
         return {
             **service.config(),
-            "student_stdio": shlex.join([sys.executable, "-m", "classroom.mcp_server", "--role", "student"]),
-            "instructor_stdio": shlex.join([sys.executable, "-m", "classroom.mcp_server", "--role", "instructor"]),
+            "student_stdio": None,
+            "instructor_stdio": None,
         }
 
     @app.get("/api/courses")
-    def courses():
-        return {"courses": service.list_courses()}
+    def courses(request: Request):
+        return {"courses": auth.courses(request.state.user)}
 
     @app.post("/api/courses", status_code=201)
-    def add_course(data: CourseInput):
-        return service.create_course(data.title, data.description)
+    def add_course(data: CourseInput, request: Request):
+        return service.create_course(data.title, data.description, owner_id=request.state.user["id"])
 
     @app.get("/api/courses/{course_id}/materials")
     def materials(course_id: int):
@@ -191,7 +234,6 @@ def create_app(db_path: str | None = None, seed: bool = True) -> FastAPI:
     def exam_plan(course_id: int, data: ExamInput):
         return service.exam_plan(course_id, data.total_questions)
 
-    app.mount("/mcp", Starlette(routes=student_http.routes + instructor_http.routes))
     static = Path(__file__).parent / "static"
     static.mkdir(exist_ok=True)
     app.mount("/static", StaticFiles(directory=static), name="static")

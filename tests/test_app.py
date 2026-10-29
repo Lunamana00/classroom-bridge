@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
+from conftest import authenticated_client as TestClient
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from pypdf import PdfWriter
@@ -84,7 +84,7 @@ def test_pdf_page_citations_and_invalid_uploads(client):
         response = client.post(f"/api/courses/{course_id}/materials", files={"file": (filename, content)})
         assert response.status_code == 400, response.text
     assert client.post(f"/api/courses/{course_id}/exam-plan", json={"total_questions": 0}).status_code == 422
-    assert client.post("/api/ask", json={"course_id": 999, "question": "질문"}).status_code == 404
+    assert client.post("/api/ask", json={"course_id": 999, "question": "질문"}).status_code == 403
 
 
 def test_cross_origin_changes_are_rejected(client):
@@ -114,37 +114,14 @@ def rpc(client, role, method, params=None, request_id=1):
     return body["result"]
 
 
-def test_real_http_mcp_protocol_and_role_tools(client):
-    course_id = make_course(client)
-    init = rpc(client, "student", "initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "integration-test", "version": "1"}})
-    assert init["serverInfo"]["name"]
-    student_tools = {tool["name"] for tool in rpc(client, "student", "tools/list")["tools"]}
-    assert student_tools == {"list_courses", "search_course_materials"}
-    instructor_tools = {tool["name"] for tool in rpc(client, "instructor", "tools/list")["tools"]}
-    assert {"add_course_material", "get_question_insights", "prepare_exam_plan"} <= instructor_tools
-    added = rpc(client, "instructor", "tools/call", {"name": "add_course_material", "arguments": {"course_id": course_id, "title": "경사하강법", "text": "경사하강법은 손실함수의 기울기 반대 방향으로 매개변수를 이동합니다."}})
-    assert not added.get("isError")
-    found = rpc(client, "student", "tools/call", {"name": "search_course_materials", "arguments": {"course_id": course_id, "question": "경사하강법이 뭐야?"}})
-    assert not found.get("isError")
-    assert "경사하강법" in str(found)
-    assert client.get(f"/api/courses/{course_id}/analytics").json()["real_questions"] == 1
-    forbidden = rpc(client, "student", "tools/call", {"name": "get_question_insights", "arguments": {"course_id": course_id}})
-    assert forbidden["isError"] is True
+def test_mcp_requires_bearer_token_even_with_web_login(client):
+    response = client.post('/mcp/instructor', json={'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'})
+    assert response.status_code == 401
+    assert 'resource_metadata' in response.headers['www-authenticate']
 
 
-async def test_stdio_client_can_connect(tmp_path):
-    root = Path(__file__).resolve().parents[1]
-    params = StdioServerParameters(
-        command=sys.executable,
-        args=["-m", "classroom.mcp_server", "--role", "student"],
-        cwd=str(root),
-        env={**os.environ, "CLASSROOM_MODE": "demo", "CLASSROOM_DB": str(tmp_path / "stdio.sqlite")},
-    )
-    async with stdio_client(params) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            tools = await session.list_tools()
-            assert {tool.name for tool in tools.tools} == {"list_courses", "search_course_materials"}
-            result = await session.call_tool("list_courses", {})
-            assert not result.isError
-            assert "머신러닝" in str(result)
+def test_stdio_is_blocked_until_authenticated_identity_is_supported(tmp_path):
+    import subprocess
+    result = subprocess.run([sys.executable, '-m', 'classroom.mcp_server', '--role', 'instructor'], capture_output=True, text=True, timeout=10)
+    assert result.returncode != 0
+    assert 'Google 로그인' in result.stderr

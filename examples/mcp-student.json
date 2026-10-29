@@ -1,11 +1,7 @@
 {
   "mcpServers": {
     "classroom-student": {
-      "command": "/ABSOLUTE/PATH/classroom-bridge/.venv/bin/python",
-      "args": ["-m", "classroom.mcp_server", "--role", "student"],
-      "env": {
-        "CLASSROOM_DB": "/ABSOLUTE/PATH/classroom-bridge/data/classroom.sqlite"
-      }
+      "url": "https://canigetbus.app/mcp/student"
     }
   }
 }

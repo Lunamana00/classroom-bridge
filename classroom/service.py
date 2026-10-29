@@ -4,14 +4,12 @@ from __future__ import annotations
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 import json
-import os
 from pathlib import Path
 import re
-import shutil
 import sqlite3
 from zoneinfo import ZoneInfo
 
-from .judge import create_judge
+from .judge import api_key, create_judge
 from .seed import SEED_DESCRIPTION, SEED_MATERIALS, SEED_QUESTIONS, SEED_TITLE
 
 KST = ZoneInfo("Asia/Seoul")
@@ -173,8 +171,8 @@ class Service:
         return {
             "mode": mode,
             "codex_configured": mode == "codex",
-            "codex_available": bool(shutil.which(os.environ.get("CODEX_BIN", "codex"))),
-            "jev_configured": bool(os.environ.get("TYPESAFE_API_KEY", "").strip()),
+            "codex_available": bool(api_key()),
+            "jev_configured": bool(api_key()),
             "model": self.model,
             "student_mcp": "/mcp/student",
             "instructor_mcp": "/mcp/instructor",
@@ -184,12 +182,14 @@ class Service:
         with self._db() as db:
             return [{**dict(row), "is_demo": bool(row["is_demo"])} for row in db.execute("SELECT * FROM courses ORDER BY id")]
 
-    def create_course(self, title, description=""):
+    def create_course(self, title, description="", *, owner_id=None):
         title = _required_text(title, "수업 이름", 160)
         if not isinstance(description, str) or len(description) > 1000:
             raise ValueError("수업 설명은 1,000자 이하여야 합니다.")
         with self._db() as db:
             course_id = db.execute("INSERT INTO courses(title,description) VALUES (?,?)", (title, description.strip())).lastrowid
+            if owner_id is not None:
+                db.execute("INSERT INTO course_members VALUES(?,?,'teacher')", (course_id, owner_id))
         return {"id": course_id, "title": title, "description": description.strip(), "is_demo": False}
 
     def list_materials(self, course_id):
