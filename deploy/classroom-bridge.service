@@ -1,5 +1,5 @@
 [Unit]
-Description=Classroom Bridge web application
+Description=KHUsistant web application
 After=network-online.target
 Wants=network-online.target
 

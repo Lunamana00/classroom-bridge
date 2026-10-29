@@ -173,7 +173,7 @@ def test_real_mcp_tools_course_membership_and_revocation(client):
     initialize = rpc(client, token, 'initialize', {'protocolVersion':'2025-11-25','capabilities':{},'clientInfo':{'name':'Test','version':'1'}})
     assert initialize.status_code == 200, initialize.text
     tools = rpc(client, token, 'tools/list').json()['result']['tools']
-    assert {t['name'] for t in tools} == {'list_courses','search_course_materials'}
+    assert {t['name'] for t in tools} == {'list_courses','search_course_materials','submit_quiz_answer','get_my_quiz_progress'}
     courses = rpc(client, token, 'tools/call', {'name':'list_courses','arguments':{}}).json()['result']
     assert not courses.get('isError') and '머신러닝' in str(courses)
     result = rpc(client, token, 'tools/call', {'name':'search_course_materials','arguments':{'course_id':1,'question':'경사하강법이란?'}}).json()['result']

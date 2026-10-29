@@ -1,1 +1,1 @@
-"""Classroom Bridge prototype."""
+"""KHUsistant classroom tools."""

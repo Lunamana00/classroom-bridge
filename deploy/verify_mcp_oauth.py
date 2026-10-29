@@ -25,7 +25,19 @@ unique=secrets.token_hex(8)
 user=auth.login_user({'sub':'deployment-test-'+unique,'email':'deployment-'+unique+'@example.invalid','email_verified':True,'name':'Disposable deployment test'})
 session,csrf=auth.new_session(user['id'])
 course=service.create_course('[Temporary MCP OAuth verification] '+unique, owner_id=user['id'])
-service.add_text(course['id'],'Gradient descent','Gradient descent updates parameters in the opposite direction of the loss gradient.')
+material=service.add_text(course['id'],'Gradient descent','Gradient descent updates parameters in the opposite direction of the loss gradient.')
+# Published fixture for student-path verification; human web approval is covered
+# by the auth/API tests, not impersonated through the live teacher allowlist.
+source_id=service.get_material(course['id'],material['id'])['chunks'][0]['id']
+quiz=service.quizzes.create_draft(course['id'],user['id'],{
+    'title':'Disposable concept practice','concepts':['gradient descent'],
+    'question':'Which direction does gradient descent move?',
+    'kind':'multiple_choice','options':['Along the gradient','Opposite the gradient'],
+    'correct_answer':'B','accepted_answers':[],
+    'explanation':'Gradient descent moves opposite the loss gradient.',
+    'source_chunk_ids':[source_id],
+})
+service.quizzes.publish(course['id'],quiz['id'],user['id'],quiz['revision'])
 with service._db() as db:
     db.execute("UPDATE course_members SET role='student' WHERE course_id=? AND user_id=?",(course['id'],user['id']))
 
@@ -64,7 +76,7 @@ async def main():
                 async with ClientSession(read,write) as mcp:
                     await mcp.initialize()
                     tools=await mcp.list_tools()
-                    assert {tool.name for tool in tools.tools}=={'list_courses','search_course_materials'}
+                    assert {tool.name for tool in tools.tools}=={'list_courses','search_course_materials','submit_quiz_answer','get_my_quiz_progress'}
                     result=await mcp.call_tool('list_courses',{})
                     assert not result.isError and unique in str(result)
                     result=await mcp.call_tool('search_course_materials',{'course_id':course['id'],'question':'Which direction does gradient descent update parameters?'})
@@ -73,6 +85,21 @@ async def main():
                     if payload is None: payload=json.loads(result.content[0].text)
                     assert payload['sufficient'] and payload['evidence'], 'source grounding failed'
                     print('PASS: official SDK discovery, registration, PKCE, consent, token exchange, initialize, list_tools, course-scoped search',flush=True)
+                    assert len(payload['quizzes'])==1, 'related approved quiz missing'
+                    delivery=payload['quizzes'][0]
+                    assert not {'correct_answer','accepted_answers','explanation'} & delivery.keys(), 'student answer key leak'
+                    graded=await mcp.call_tool('submit_quiz_answer',{'course_id':course['id'],'delivery_id':delivery['delivery_id'],'answer':'A'})
+                    assert not graded.isError
+                    grade=graded.structuredContent or json.loads(graded.content[0].text)
+                    assert grade['is_correct'] is False and grade['is_first_attempt']
+                    repeated=await mcp.call_tool('submit_quiz_answer',{'course_id':course['id'],'delivery_id':delivery['delivery_id'],'answer':'A'})
+                    repeated_data=repeated.structuredContent or json.loads(repeated.content[0].text)
+                    assert repeated_data['replayed'] and repeated_data['attempt_id']==grade['attempt_id']
+                    progress=await mcp.call_tool('get_my_quiz_progress',{'course_id':course['id']})
+                    progress_data=progress.structuredContent or json.loads(progress.content[0].text)
+                    assert progress_data['first_attempt_count']==1 and progress_data['concepts'][0]['incorrect_count']==1
+                    assert service.exam_plan(course['id'])['quiz_insights']['concepts'][0]['incorrect_count']==1
+                    print('PASS: approved related quiz, hidden answer key, server grading, idempotent replay, own progress and exam evidence',flush=True)
                     denied=await mcp.call_tool('search_course_materials',{'course_id':2147483647,'question':'unrelated course'})
                     assert denied.isError, 'cross-course access was not blocked'
                     print('PASS: cross-course permission denial',flush=True)

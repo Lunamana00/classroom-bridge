@@ -4,12 +4,13 @@ import io
 import os
 from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
+from typing import Literal
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from pypdf import PdfReader
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -46,6 +47,28 @@ class AskInput(BaseModel):
 
 class ExamInput(BaseModel):
     total_questions: int = Field(default=10, ge=1, le=50)
+class QuizDraftInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: str = Field(min_length=1, max_length=200)
+    concepts: list[str] = Field(min_length=1, max_length=8)
+    question: str = Field(min_length=1, max_length=4000)
+    kind: Literal["multiple_choice", "short_answer"]
+    options: list[str] = Field(default_factory=list, max_length=6)
+    correct_answer: str = Field(min_length=1, max_length=1000)
+    accepted_answers: list[str] = Field(default_factory=list, max_length=20)
+    explanation: str = Field(min_length=1, max_length=4000)
+    source_chunk_ids: list[int] = Field(min_length=1, max_length=8)
+
+
+class QuizAnswerInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    delivery_id: str = Field(min_length=1, max_length=128)
+    answer: str = Field(min_length=1, max_length=4000)
+
+
+class QuizApprovalInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_revision: int = Field(gt=0, strict=True)
 
 
 def parse_document(filename: str, content: bytes) -> tuple[str, list[tuple[int, str]] | None]:
@@ -107,10 +130,11 @@ def create_app(db_path: str | None = None, seed: bool = True) -> FastAPI:
             if not isinstance(course_id, int) or isinstance(course_id, bool) or course_id <= 0:
                 raise HTTPException(422, "수업 ID를 확인해 주세요.")
         if course_id is not None:
-            teacher = request.url.path != "/api/ask" and not (request.method == "GET" and "/materials" in request.url.path)
+            member_route = request.url.path == "/api/ask" or request.url.path.endswith(("/quiz-progress", "/quiz-answers")) or (request.method == "GET" and "/materials" in request.url.path)
+            teacher = not member_route
             auth.require_course(user, course_id, teacher=teacher)
 
-    app = FastAPI(title="수업 사이 · Classroom Bridge", dependencies=[Depends(course_permission)])
+    app = FastAPI(title="KHU조교 · KHUsistant", dependencies=[Depends(course_permission)])
     app.state.service = service
     app.state.auth = auth
     auth.install(app)
@@ -163,6 +187,10 @@ def create_app(db_path: str | None = None, seed: bool = True) -> FastAPI:
     @app.exception_handler(LookupError)
     async def missing(request, exc):
         return JSONResponse({"detail": str(exc)}, status_code=404)
+
+    @app.exception_handler(PermissionError)
+    async def denied(request, exc):
+        return JSONResponse({"detail": str(exc)}, status_code=403)
 
     @app.exception_handler(ValueError)
     async def invalid(request, exc):
@@ -219,12 +247,18 @@ def create_app(db_path: str | None = None, seed: bool = True) -> FastAPI:
         return service.delete_material(course_id, material_id)
 
     @app.post("/api/ask")
-    async def ask(data: AskInput):
-        return await service.ask(data.course_id, data.question)
+    async def ask(data: AskInput, request: Request):
+        return await service.ask(data.course_id, data.question, student_id=request.state.user["id"])
 
     @app.get("/api/courses/{course_id}/analytics")
     def analytics(course_id: int):
         return service.analytics(course_id)
+
+    @app.get("/api/courses/{course_id}/question-statistics")
+    def question_statistics(course_id: int, topic: str | None = None,
+                            offset: int = Query(default=0, ge=0),
+                            limit: int = Query(default=20, ge=1, le=100)):
+        return service.question_statistics(course_id, topic=topic, offset=offset, limit=limit)
 
     @app.get("/api/courses/{course_id}/teaching-brief")
     def teaching_brief(course_id: int):
@@ -233,6 +267,39 @@ def create_app(db_path: str | None = None, seed: bool = True) -> FastAPI:
     @app.post("/api/courses/{course_id}/exam-plan")
     def exam_plan(course_id: int, data: ExamInput):
         return service.exam_plan(course_id, data.total_questions)
+
+    @app.get("/api/courses/{course_id}/quizzes")
+    def quizzes(course_id: int):
+        return {"quizzes": service.quizzes.list_quizzes(course_id)}
+
+    @app.post("/api/courses/{course_id}/quizzes", status_code=201)
+    def create_quiz(course_id: int, data: QuizDraftInput, request: Request):
+        return service.quizzes.create_draft(course_id, request.state.user["id"], data.model_dump())
+
+    @app.put("/api/courses/{course_id}/quizzes/{quiz_id}")
+    def edit_quiz(course_id: int, quiz_id: int, data: QuizDraftInput, request: Request):
+        return service.quizzes.update_draft(course_id, quiz_id, request.state.user["id"], data.model_dump())
+
+    @app.post("/api/courses/{course_id}/quizzes/{quiz_id}/publish")
+    def publish_quiz(course_id: int, quiz_id: int, data: QuizApprovalInput, request: Request):
+        # Web approval verifies the browser session, CSRF and reviewed revision.
+        return service.quizzes.publish(course_id, quiz_id, request.state.user["id"], data.expected_revision)
+
+    @app.post("/api/courses/{course_id}/quizzes/{quiz_id}/archive")
+    def archive_quiz(course_id: int, quiz_id: int, request: Request):
+        return service.quizzes.archive(course_id, quiz_id, request.state.user["id"])
+
+    @app.get("/api/courses/{course_id}/quiz-insights")
+    def quiz_insights(course_id: int):
+        return service.quiz_insights(course_id)
+
+    @app.get("/api/courses/{course_id}/quiz-progress")
+    def quiz_progress(course_id: int, request: Request):
+        return service.quizzes.student_progress(course_id, request.state.user["id"])
+
+    @app.post("/api/courses/{course_id}/quiz-answers")
+    def quiz_answer(course_id: int, data: QuizAnswerInput, request: Request):
+        return service.quizzes.submit_answer(course_id, data.delivery_id, request.state.user["id"], data.answer)
 
     static = Path(__file__).parent / "static"
     static.mkdir(exist_ok=True)

@@ -14,11 +14,11 @@ Register `https://canigetbus.app/auth/google/callback` in the Google OAuth web c
 
 The first cloud deployment creates a fresh database with the demo course; local courses and login sessions are not uploaded. The first allowlisted teacher to log in owns the preexisting demo course. Later releases keep the same cloud SQLite path.
 
-The previous `oauth-mcp-test.service` remains running on its existing internal port, but nginx now connects the domain to Classroom Bridge. Classroom Bridge's HTTPS MCP endpoints use OAuth; the previous test server does not participate in that flow. stdio is unsupported.
+The previous `oauth-mcp-test.service` remains running on its existing internal port, but nginx now connects the domain to KHUsistant. KHUsistant's HTTPS MCP endpoints use OAuth; the previous test server does not participate in that flow. stdio is unsupported.
 
 Check service state with `ssh oracle 'sudo systemctl is-active classroom-bridge'`. Restart after an environment change with `ssh oracle 'sudo systemctl restart classroom-bridge'`. Google callback query parameters are excluded from HTTP access logs.
 
-For rollback, restore the saved nginx symlink in `/etc/nginx/sites-enabled/`, remove the new Classroom Bridge symlink, run `sudo nginx -t`, then reload nginx. Do not delete the cloud SQLite database or environment file. Back up SQLite using its backup API before migrating its schema.
+For rollback, restore the saved nginx symlink in `/etc/nginx/sites-enabled/`, remove the new `classroom-bridge` symlink, run `sudo nginx -t`, then reload nginx. Do not delete the cloud SQLite database or environment file. Back up SQLite using its backup API before migrating its schema.
 
 
 ## OAuth verification
