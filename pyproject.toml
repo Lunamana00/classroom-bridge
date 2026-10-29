@@ -11,6 +11,7 @@ dependencies = [
   "openai>=3.41,<4",
   "python-multipart>=0.0.20,<1",
   "pypdf>=5,<7",
+  "fonttools>=4,<5",
   "python-dotenv>=1,<2",
   "Authlib>=1.6,<2",
   "itsdangerous>=2.2,<3",

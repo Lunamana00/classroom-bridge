@@ -30,6 +30,13 @@ def payload(source, **changes):
     return result
 
 
+def test_chain_rule_aliases_match_explicit_gradient_terms_without_generic_gradient_match():
+    assert QuizStore._matches("chain rule", "upstream gradient와 local gradient를 왜 곱하나요?")
+    assert QuizStore._matches("연쇄법칙", "local gradient를 설명해 주세요")
+    assert not QuizStore._matches("chain rule", "gradient descent의 학습률을 알려줘")
+    assert not QuizStore._matches("chain rule", "upstreamgradientnoise의 이름")
+
+
 def question(service, course_id=1, text='경사하강법을 설명해 줘'):
     with service._db() as db:
         return db.execute("INSERT INTO questions(course_id,question,topic,created_at,sufficient,is_demo,mode) VALUES(?,?,?,'2026-10-30',0,0,'demo')", (course_id,text,'경사하강법')).lastrowid

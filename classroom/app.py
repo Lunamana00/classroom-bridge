@@ -1,10 +1,11 @@
 """Local instructor workspace and HTTP MCP endpoints."""
 
+import asyncio
 import io
 import os
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
@@ -71,6 +72,16 @@ class QuizApprovalInput(BaseModel):
     expected_revision: int = Field(gt=0, strict=True)
 
 
+class ConceptDraftInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_revision: int = Field(gt=0, strict=True)
+    name: str = Field(min_length=1, max_length=200)
+    description: str = Field(min_length=1, max_length=4000)
+    aliases: list[str] = Field(default_factory=list, max_length=40)
+    source_chunk_ids: list[Annotated[int, Field(gt=0, strict=True)]] = Field(min_length=1, max_length=1000)
+    merge_target_id: int | None = Field(default=None, gt=0, strict=True)
+
+
 def parse_document(filename: str, content: bytes) -> tuple[str, list[tuple[int, str]] | None]:
     suffix = Path(filename).suffix.lower()
     if suffix in {".txt", ".md"}:
@@ -130,7 +141,7 @@ def create_app(db_path: str | None = None, seed: bool = True) -> FastAPI:
             if not isinstance(course_id, int) or isinstance(course_id, bool) or course_id <= 0:
                 raise HTTPException(422, "수업 ID를 확인해 주세요.")
         if course_id is not None:
-            member_route = request.url.path == "/api/ask" or request.url.path.endswith(("/quiz-progress", "/quiz-answers")) or (request.method == "GET" and "/materials" in request.url.path)
+            member_route = request.url.path == "/api/ask" or request.url.path.endswith(("/quiz-progress", "/quiz-answers")) or (request.method == "GET" and "/materials" in request.url.path and "/extract-concepts" not in request.url.path)
             teacher = not member_route
             auth.require_course(user, course_id, teacher=teacher)
 
@@ -165,7 +176,13 @@ def create_app(db_path: str | None = None, seed: bool = True) -> FastAPI:
         async with AsyncExitStack() as stack:
             for server in servers:
                 await stack.enter_async_context(server.session_manager.run())
-            yield
+            worker = asyncio.create_task(service.concepts.worker(service.concept_extractor))
+            try:
+                yield
+            finally:
+                worker.cancel()
+                with suppress(asyncio.CancelledError):
+                    await worker
     app.router.lifespan_context = lifespan
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "[::1]", "testserver", auth.hostname])
 
@@ -245,6 +262,33 @@ def create_app(db_path: str | None = None, seed: bool = True) -> FastAPI:
     @app.delete("/api/courses/{course_id}/materials/{material_id}")
     def delete(course_id: int, material_id: int):
         return service.delete_material(course_id, material_id)
+
+    @app.post("/api/courses/{course_id}/materials/{material_id}/extract-concepts", status_code=202)
+    def extract_concepts(course_id: int, material_id: int):
+        return service.concepts.enqueue(course_id, material_id, retry=True)
+
+    @app.get("/api/courses/{course_id}/concepts")
+    def concepts(course_id: int):
+        return service.concepts.overview(course_id)
+
+    @app.get("/api/courses/{course_id}/concepts/{concept_id}")
+    def concept(course_id: int, concept_id: int):
+        return service.concepts.get(course_id, concept_id)
+
+    @app.put("/api/courses/{course_id}/concepts/{concept_id}")
+    def edit_concept(course_id: int, concept_id: int, data: ConceptDraftInput, request: Request):
+        return service.concepts.update_draft(
+            course_id, concept_id, request.state.user["id"],
+            data.model_dump(exclude={"expected_revision"}), data.expected_revision,
+        )
+
+    @app.post("/api/courses/{course_id}/concepts/{concept_id}/approve")
+    def approve_concept(course_id: int, concept_id: int, data: QuizApprovalInput, request: Request):
+        return service.concepts.approve(course_id, concept_id, request.state.user["id"], data.expected_revision)
+
+    @app.post("/api/courses/{course_id}/concepts/{concept_id}/reject")
+    def reject_concept(course_id: int, concept_id: int, data: QuizApprovalInput, request: Request):
+        return service.concepts.reject(course_id, concept_id, request.state.user["id"], data.expected_revision)
 
     @app.post("/api/ask")
     async def ask(data: AskInput, request: Request):

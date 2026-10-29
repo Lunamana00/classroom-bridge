@@ -20,6 +20,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 MANAGED_PREFIXES = ("[촬영] CS231n", "[리허설] CS231n")
+COURSE_TITLE = "CS231n 2026"
+# Pinned after exporting the user-supplied complete course corpus.
+FULL_CORPUS_MANIFEST_SHA256 = "30fc77f61f5c7b4e0f6dac8de91a7a63ad208d10b86abcdebc40a93553e82ebd"
 META_PREFIX = "cs231n_filming_v1:"
 EXPECTED_ASSETS = {
     "02_section_2_backprop.pdf": "e9eb8fa56c8e89e680de8a9fe2a6b9c9330bc517f66e8097fd23b22379db011d",
@@ -51,19 +54,32 @@ def backup_database(db_path: Path, backup_dir: Path) -> Path | None:
 
 def load_assets(directory: Path) -> list[dict]:
     from classroom.app import parse_document
-    manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
+    directory = directory.resolve()
+    manifest_bytes = (directory / "manifest.json").read_bytes()
+    manifest = json.loads(manifest_bytes)
     entries = manifest.get("sources", [])
-    if len(entries) != len(EXPECTED_ASSETS) or {row.get("file") for row in entries} != set(EXPECTED_ASSETS):
-        raise ValueError("지정한 CS231n PDF와 코드 셀 11·18만 사용할 수 있습니다.")
+    complete = manifest.get("format_version") == 2
+    if complete:
+        if hashlib.sha256(manifest_bytes).hexdigest() != FULL_CORPUS_MANIFEST_SHA256:
+            raise ValueError("승인한 전체 CS231n 자료 목록과 다릅니다. 원본에서 다시 준비해 주세요.")
+        if not entries or len({row.get("file") for row in entries}) != len(entries):
+            raise ValueError("전체 CS231n 자료 목록에 누락 또는 중복이 있습니다.")
+    elif len(entries) != len(EXPECTED_ASSETS) or {row.get("file") for row in entries} != set(EXPECTED_ASSETS):
+        raise ValueError("지정한 CS231n PDF와 코드 원문만 사용할 수 있습니다.")
     result = []
     for row in entries:
         filename = row["file"]
-        content = (directory / filename).read_bytes()
+        path = directory / filename
+        if Path(filename).is_absolute() or ".." in Path(filename).parts or not path.resolve().is_relative_to(directory) or path.is_symlink():
+            raise ValueError("자료 파일은 에셋 폴더 내부에 있어야 합니다.")
+        if row.get("kind") not in {"pdf", "code"} or path.suffix.lower() not in {".pdf", ".txt"}:
+            raise ValueError("CS231n PDF와 코드 원문만 등록할 수 있습니다.")
+        content = path.read_bytes()
         digest = hashlib.sha256(content).hexdigest()
-        if digest != EXPECTED_ASSETS[filename] or row.get("sha256") != digest:
+        if (not complete and digest != EXPECTED_ASSETS[filename]) or row.get("sha256") != digest:
             raise ValueError(f"원본과 다른 촬영 자료입니다: {filename}")
         text, pages = parse_document(filename, content)
-        if filename.endswith(".pdf") and not {6, 7, 8, 16}.issubset({p for p, _ in pages or []}):
+        if filename == "02_section_2_backprop.pdf" and not {6, 7, 8, 16}.issubset({p for p, _ in pages or []}):
             raise ValueError("퀴즈 출처 PDF 페이지를 확인할 수 없습니다.")
         result.append({**row, "text": text, "pages": pages})
     return result
@@ -109,8 +125,8 @@ class DemoSetup:
     def _course(service, auth, course_id):
         with service._db() as db:
             course = service._course(db, course_id)
-            if not course["title"].startswith(MANAGED_PREFIXES):
-                raise ValueError("[촬영] CS231n 또는 [리허설] CS231n 수업만 변경할 수 있습니다.")
+            if course["title"] != COURSE_TITLE and not course["title"].startswith(MANAGED_PREFIXES):
+                raise ValueError("CS231n 2026 또는 기존 촬영용 접두사의 수업만 변경할 수 있습니다.")
             teachers = db.execute("SELECT u.id,u.email FROM users u JOIN course_members m ON m.user_id=u.id WHERE m.course_id=? AND m.role='teacher' ORDER BY u.id", (course_id,)).fetchall()
         owner = next((row["id"] for row in teachers if row["email"] in auth.teacher_emails), None)
         if owner is None:
@@ -136,14 +152,18 @@ class DemoSetup:
         with service._db() as db:
             db.execute("BEGIN IMMEDIATE")
             courses = db.execute("SELECT id,title,is_demo FROM courses").fetchall()
-            selected = [row["id"] for row in courses if row["is_demo"] or row["title"].startswith(MANAGED_PREFIXES)]
+            managed = {int(row[0][len(META_PREFIX):]) for row in db.execute("SELECT key FROM metadata WHERE key LIKE ?", (META_PREFIX + "%",)) if row[0][len(META_PREFIX):].isdigit()}
+            selected = [row["id"] for row in courses if row["is_demo"] or row["title"].startswith(MANAGED_PREFIXES) or row["id"] in managed]
             for course_id in selected:
                 db.execute("DELETE FROM courses WHERE id=?", (course_id,))
                 db.execute("DELETE FROM metadata WHERE key=?", (self._key(course_id),))
             db.execute("INSERT OR REPLACE INTO metadata(key,value) VALUES('demo_seed_v1','1')")
         return {"backup": backup, "deleted_course_ids": selected, "preserved": "users, sessions, OAuth connections, unrelated courses", "state": self.status()}
 
-    def stage(self, course_id: int, assets: str | Path):
+    def materials(self, course_id: int, assets: str | Path):
+        return self.stage(course_id, assets, with_quizzes=False)
+
+    def stage(self, course_id: int, assets: str | Path, *, with_quizzes=True):
         sources = load_assets(Path(assets))
         service, auth, backup = self._begin()
         owner = self._course(service, auth, course_id)
@@ -151,20 +171,35 @@ class DemoSetup:
         with service._db() as db:
             saved_row = db.execute("SELECT value FROM metadata WHERE key=?", (self._key(course_id),)).fetchone()
         saved = json.loads(saved_row[0]) if saved_row else {}
+        # Compare original chunks once per existing material, rather than
+        # reopening every source for every one of the full-course assets.
+        existing_materials = service.list_materials(course_id)
+        by_chunks = {}
+        for material in existing_materials:
+            detail = service.get_material(course_id, material["id"])
+            fingerprint = tuple((row["text"], row["page"], row["section"]) for row in detail["chunks"])
+            by_chunks.setdefault(fingerprint, []).append(material)
         materials = []
+        used_ids = set()
         for source in sources:
-            expected = _chunks(source["text"].strip(), source["pages"])
-            matches = []
-            for material in service.list_materials(course_id):
-                detail = service.get_material(course_id, material["id"])
-                actual = [(row["text"], row["page"], row["section"]) for row in detail["chunks"]]
-                if actual == expected:
-                    matches.append(material)
-                elif material["filename"] == source["file"] or material["title"] == source["title"]:
-                    raise ValueError(f"동일 이름의 자료가 원본과 다릅니다. 직접 확인해 주세요: {source['file']}")
-            material = matches[0] if matches else service.add_text(course_id, source["title"], source["text"], source["file"], source["pages"])
+            expected = tuple(_chunks(source["text"].strip(), source["pages"]))
+            material = next((item for item in by_chunks.get(expected, []) if item["id"] not in used_ids), None)
+            if material is None:
+                for existing_material in existing_materials:
+                    if existing_material["filename"] == source["file"] or existing_material["title"] == source["title"]:
+                        raise ValueError(f"동일 이름의 자료가 원본과 다릅니다. 직접 확인해 주세요: {source['file']}")
+                material = service.add_text(course_id, source["title"], source["text"], source["file"], source["pages"])
+                existing_materials.append(material)
+                by_chunks.setdefault(expected, []).append(material)
+            used_ids.add(material["id"])
             materials.append({"id": material["id"], "filename": source["file"], "sha256": source["sha256"]})
-        pdf_id = next(row["id"] for row in materials if row["filename"].endswith(".pdf"))
+        saved.update({"materials": materials, "course_title": COURSE_TITLE})
+        if not with_quizzes:
+            with service._db() as db:
+                db.execute("INSERT OR REPLACE INTO metadata(key,value) VALUES(?,?)", (self._key(course_id), json.dumps(saved, ensure_ascii=False)))
+                db.execute("INSERT OR REPLACE INTO metadata(key,value) VALUES('demo_seed_v1','1')")
+            return {"backup": backup, "course_id": course_id, "materials": materials, "asset_count": len(materials), "quizzes_created": 0}
+        pdf_id = next(row["id"] for row in materials if row["filename"] == "02_section_2_backprop.pdf")
         page_ids = {}
         for chunk in service.get_material(course_id, pdf_id)["chunks"]:
             page_ids.setdefault(chunk["page"], chunk["id"])
@@ -236,7 +271,7 @@ class DemoSetup:
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("status", "reset-start", "stage", "seed-activity"))
+    parser.add_argument("command", choices=("status", "reset-start", "materials", "stage", "seed-activity"))
     parser.add_argument("--db", type=Path, required=True)
     parser.add_argument("--backup-dir", type=Path)
     parser.add_argument("--assets", type=Path)
@@ -253,16 +288,18 @@ def main(argv=None):
     if args.env_file:
         from dotenv import dotenv_values
         os.environ.update({key: value for key, value in dotenv_values(args.env_file).items() if value is not None})
-    if args.command in {"stage", "seed-activity"} and (not args.course_id or args.course_id < 1):
-        parser.error("stage/seed-activity에는 --course-id 양의 정수가 필요합니다.")
-    if args.command == "stage" and not args.assets:
-        parser.error("stage에는 --assets 폴더가 필요합니다.")
+    if args.command in {"materials", "stage", "seed-activity"} and (not args.course_id or args.course_id < 1):
+        parser.error("materials/stage/seed-activity에는 --course-id 양의 정수가 필요합니다.")
+    if args.command in {"materials", "stage"} and not args.assets:
+        parser.error("materials/stage에는 --assets 폴더가 필요합니다.")
     tool = DemoSetup(args.db, args.backup_dir or args.db.parent / "backups")
     try:
         if args.command == "status":
             result = tool.status()
         elif args.command == "reset-start":
             result = tool.reset_start()
+        elif args.command == "materials":
+            result = tool.materials(args.course_id, args.assets)
         elif args.command == "stage":
             result = tool.stage(args.course_id, args.assets)
         else:

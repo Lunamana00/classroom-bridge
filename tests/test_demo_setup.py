@@ -180,3 +180,37 @@ def test_cli_resolves_paths_before_leaving_unrelated_cwd(data, tmp_path, monkeyp
     assert os.environ["FILMING_CLI_PATH_TEST"] == "loaded"
     assert auth.base_url == "http://127.0.0.1:8000"
     assert course in json.loads(capsys.readouterr().out)["deleted_course_ids"]
+
+
+def test_materials_only_accepts_course_title_and_reset_preserves_unmanaged_namesake(data, assets):
+    tool, service, _, teacher, course = data
+    with service._db() as db:
+        db.execute("UPDATE courses SET title='CS231n 2026' WHERE id=?", (course,))
+    unrelated = service.create_course("CS231n 2026", owner_id=teacher)
+    result = tool.materials(course, assets)
+    assert result["asset_count"] == 3 and result["quizzes_created"] == 0
+    assert service.quizzes.list_quizzes(course) == []
+    tool.reset_start()
+    assert [row["id"] for row in service.list_courses()] == [unrelated["id"]]
+
+
+def test_complete_manifest_is_pinned_and_preserves_distinct_source_provenance(data, assets, monkeypatch):
+    tool, service, _, _, course = data
+    manifest_path = assets / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["format_version"] = 2
+    # Identical code in different original cells still has distinct provenance.
+    extra = dict(manifest["sources"][1], file="another_cell.txt", title="Another original code cell")
+    (assets / extra["file"]).write_bytes((assets / manifest["sources"][1]["file"]).read_bytes())
+    manifest["sources"].append(extra)
+    manifest_path.write_text(json.dumps(manifest))
+    monkeypatch.setattr(demo_setup, "FULL_CORPUS_MANIFEST_SHA256", hashlib.sha256(manifest_path.read_bytes()).hexdigest())
+    first = tool.materials(course, assets)
+    assert len({row["id"] for row in first["materials"]}) == 4
+    repeated = tool.materials(course, assets)
+    assert [row["id"] for row in first["materials"]] == [row["id"] for row in repeated["materials"]]
+    assert len(service.list_materials(course)) == 4
+    manifest["course_title"] = "Changed manifest"
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="승인한 전체"):
+        tool.materials(course, assets)

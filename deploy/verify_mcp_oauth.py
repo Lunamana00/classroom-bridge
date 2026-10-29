@@ -29,6 +29,19 @@ material=service.add_text(course['id'],'Gradient descent','Gradient descent upda
 # Published fixture for student-path verification; human web approval is covered
 # by the auth/API tests, not impersonated through the live teacher allowlist.
 source_id=service.get_material(course['id'],material['id'])['chunks'][0]['id']
+# Internal fixture confined to this disposable course. This does not expose an
+# approval route or approve concepts belonging to any existing teacher/course.
+with service._db() as db:
+    concept_id=db.execute(
+        "INSERT INTO course_concepts(course_id,name,description,aliases_json,status,revision,"
+        "approved_by,approved_at,reviewed_by,reviewed_at,extraction_model,created_at,updated_at) "
+        "VALUES(?,?,?,?,'approved',1,?,CURRENT_TIMESTAMP,?,CURRENT_TIMESTAMP,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)",
+        (course['id'],'Gradient descent',
+         'Updates parameters in the opposite direction of the loss gradient.',
+         json.dumps(['gradient descent','경사하강법'],ensure_ascii=False),
+         user['id'],user['id'],'disposable-deployment-fixture'),
+    ).lastrowid
+    db.execute('INSERT INTO concept_sources(concept_id,chunk_id) VALUES(?,?)',(concept_id,source_id))
 quiz=service.quizzes.create_draft(course['id'],user['id'],{
     'title':'Disposable concept practice','concepts':['gradient descent'],
     'question':'Which direction does gradient descent move?',
@@ -83,8 +96,16 @@ async def main():
                     assert not result.isError, 'source search tool failed'
                     payload=result.structuredContent
                     if payload is None: payload=json.loads(result.content[0].text)
+                    assert payload['mode']=='codex', 'GPT provider is not active'
+                    assert payload['retrieval_method']=='gpt_all_concepts', 'full-catalog GPT search is not active'
+                    assert payload['concept_catalog_size']==1, 'disposable approved concept catalog is incomplete'
+                    assert [concept['id'] for concept in payload['concepts']]==[concept_id], 'expected course concept was not selected'
+                    assert payload['concepts'][0]['reason'].strip(), 'concept selection reason is missing'
+                    assert payload['concepts'][0]['source_chunk_ids']==[source_id], 'concept source link was not preserved'
                     assert payload['sufficient'] and payload['evidence'], 'source grounding failed'
+                    assert {source['chunk_id'] for source in payload['evidence']}=={source_id}, 'selected evidence escaped the disposable concept'
                     print('PASS: official SDK discovery, registration, PKCE, consent, token exchange, initialize, list_tools, course-scoped search',flush=True)
+                    print('PASS: GPT full approved concept catalog, selected concept/reason, linked original evidence and sufficiency',flush=True)
                     assert len(payload['quizzes'])==1, 'related approved quiz missing'
                     delivery=payload['quizzes'][0]
                     assert not {'correct_answer','accepted_answers','explanation'} & delivery.keys(), 'student answer key leak'

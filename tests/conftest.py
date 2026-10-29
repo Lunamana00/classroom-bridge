@@ -12,6 +12,10 @@ def isolate_provider_credentials(monkeypatch):
     monkeypatch.setenv("OPEN_API_KEY", "")
     monkeypatch.setenv("OPENAI_API_KEY", "")
     monkeypatch.setenv("OPENAI_BASE_URL", "https://factchat-cloud.mindlogic.ai/v1/gateway")
+    monkeypatch.setenv("CONCEPT_EXTRACTION_MODE", "disabled")
+    # Existing fixtures exercise the explicitly supported legacy retrieval path.
+    # Concept retrieval tests remove this override to cover the product default.
+    monkeypatch.setenv("CLASSROOM_RETRIEVAL", "lexical")
 
 
 def authenticate(client, email='teacher@example.test', sub=None):

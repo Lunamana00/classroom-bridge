@@ -1,3 +1,4 @@
+import json
 import sqlite3
 
 import pytest
@@ -130,5 +131,100 @@ def test_large_course_discloses_prompt_scope_limit(service):
     assert context["source_scope"]["included_chunks"] == 60
     assert context["source_scope"]["truncated"] is True
     assert all("chunk_id" in source for source in context["source_excerpts"])
+    material = service.list_materials(course["id"])[0]
+    original = service.get_material(course["id"], material["id"])["chunks"]
+    assert [source["chunk_id"] for source in context["source_excerpts"]] == [source["id"] for source in original[:60]]
     assert "전체 강의 범위를 대표하지" in service.exam_plan(course["id"])["notice"]
     assert "전체 강의 범위를 대표하지" in service.teaching_brief(course["id"])["summary"]
+
+
+def test_large_course_catalog_and_excerpts_reach_later_lectures_and_code(service):
+    course = service.create_course("CS231n 2026")
+    first = service.add_text(course["id"], "긴 첫 강의", "\n\n".join(f"## 도입 {i}\n첫 강의 내용 {i}" for i in range(80)), "lecture_1.pdf")
+    later = [service.add_text(course["id"], title, text, filename) for title, text, filename in [
+        ("CNN", "합성곱 신경망의 계산입니다.", "lecture_5.pdf"),
+        ("Transformer", "Attention의 계산입니다.", "lecture_8.pdf"),
+    ]]
+    code = [service.add_text(course["id"], f"코드 셀 {i}", f"result_{i} = {i}\n", f"cell_{i}.txt") for i in range(80)]
+    context = service._course_context(course["id"])
+    catalog = context["material_catalog"]
+    assert [row["id"] for row in catalog] == [first["id"], *[row["id"] for row in later + code]]
+    assert catalog[0] == {"id": first["id"], "title": "긴 첫 강의", "filename": "lecture_1.pdf", "chunk_count": 80}
+    selected = {source["material_id"] for source in context["source_excerpts"]}
+    assert {first["id"], *[row["id"] for row in later], code[0]["id"], code[-1]["id"]} <= selected
+    assert len(context["source_excerpts"]) == 60
+    assert context["source_scope"]["total_materials"] == 83
+    assert context["source_scope"]["included_materials"] == len(selected)
+    assert context["source_scope"]["truncated"]
+
+
+def test_large_course_prioritizes_live_recent_and_quiz_sources_without_crossing_courses(service):
+    from classroom.auth import Auth
+
+    auth = Auth(service)
+    teacher = auth.login_user({"sub": "context-teacher", "email": "teacher@example.test", "email_verified": True, "name": "교수"})
+    course = service.create_course("CS231n 2026", owner_id=teacher["id"])
+    early = service.add_text(course["id"], "첫 강의", "\n\n".join(f"## 앞쪽 {i}\n첫 강의 내용 {i}" for i in range(80)), "lecture_1.pdf")
+    late = service.add_text(course["id"], "오늘 역전파", "\n\n".join(f"## 뒤쪽 {i}\n오늘 강의 내용 {i}" for i in range(80)), "lecture_4.pdf")
+    quiz_source = service.get_material(course["id"], early["id"])["chunks"][-1]
+    recent_source = service.get_material(course["id"], late["id"])["chunks"][-1]
+    foreign_material = service.list_materials(1)[0]
+    foreign_source = service.get_material(1, foreign_material["id"])["chunks"][0]
+    service.quizzes.create_draft(course["id"], teacher["id"], {
+        "title": "현재 검토 중인 문제", "concepts": ["출처 확인"], "question": "어느 구절인가요?",
+        "kind": "short_answer", "correct_answer": "끝 구절", "options": [], "accepted_answers": [],
+        "explanation": "실제 끝 구절을 확인합니다.", "source_chunk_ids": [quiz_source["id"]],
+    })
+    with service._db() as db:
+        db.execute(
+            "INSERT INTO questions(course_id,question,topic,created_at,sufficient,mode,evidence_json) VALUES(?,?,?,?,1,'demo',?)",
+            (course["id"], "오늘 질문", "역전파", "2026-10-30T12:00:00+09:00", json.dumps([
+                {"chunk_id": recent_source["id"], "text": "기록 안의 원문 대체 문장은 사용하지 않는다"},
+                {"chunk_id": foreign_source["id"]}, {"chunk_id": 999999},
+            ])),
+        )
+    context = service._course_context(course["id"])
+    selected = {source["chunk_id"]: source for source in context["source_excerpts"]}
+    assert recent_source["id"] in selected and quiz_source["id"] in selected
+    assert selected[recent_source["id"]]["text"] == recent_source["text"]
+    assert foreign_source["id"] not in selected and 999999 not in selected
+    assert context["source_scope"]["priority_chunks"] == 2
+    assert len(context["source_excerpts"]) == 60
+
+
+def test_retrieval_keeps_review_material_among_long_lecture_matches(service):
+    course = service.create_course("CS231n 2026")
+    text = "Backpropagation uses upstream gradient times local gradient."
+    lecture = service.add_text(course["id"], "CS231n 2026 Backpropagation lecture", text, "lecture.pdf", [(page, text) for page in range(1, 10)])
+    review = service.add_text(course["id"], "CS231n 2026 Backpropagation review", text, "review.pdf", [(6, text), (7, text)])
+    foreign = service.create_course("별도 수업")
+    service.add_text(foreign["id"], "CS231n 2026 Backpropagation review", text)
+    question = "배운 역전파가 아직 헷갈려. upstream gradient와 local gradient를 왜 곱하는지 계산 예시로 설명해 줘."
+    found = service._retrieve(course["id"], question)
+    contextual = service._retrieve(course["id"], "CS231n 2026에서 " + question)
+    assert len(found) == 6
+    assert {row["material_id"] for row in found} == {lecture["id"], review["id"]}
+    assert {row["page"] for row in found if row["material_id"] == review["id"]} == {6, 7}
+    assert [(row["chunk_id"], row["score"]) for row in contextual] == [(row["chunk_id"], row["score"]) for row in found]
+
+
+def test_natural_korean_concepts_find_english_evidence_but_course_name_is_not_evidence(service):
+    course = service.create_course("CS231n 2026")
+    relu = service.add_text(course["id"], "CS231n 2026 ReLU", "ReLU has zero gradient for negative input and passes the gradient for positive input.")
+    attention = service.add_text(course["id"], "CS231n 2026 Transformer", "Transformer self-attention combines information from the input.")
+    question = "이 코드에서 ReLU를 지난 뒤 음수 입력의 기울기를 0으로 만드는 이유가 뭐야?"
+    found = service._retrieve(course["id"], question)
+    assert found and found[0]["material_id"] == relu["id"]
+    question = "Transformer의 self-attention은 입력 안에서 어떤 정보를 섞는 건가요? 수업 자료로 설명해 주세요."
+    found = service._retrieve(course["id"], question)
+    assert found and found[0]["material_id"] == attention["id"]
+    assert service._retrieve(course["id"], "CS231n 2026의 다음 시험 날짜와 시험 강의실을 알려줘") == []
+
+
+def test_retrieval_single_material_can_still_supply_six_candidates(service):
+    course = service.create_course("한 자료 수업")
+    text = "Backpropagation uses the upstream gradient and local gradient."
+    material = service.add_text(course["id"], "Backpropagation", text, "review.pdf", [(page, text) for page in range(1, 9)])
+    sources = service.get_material(course["id"], material["id"])["chunks"]
+    found = service._retrieve(course["id"], "upstream gradient local gradient")
+    assert [row["chunk_id"] for row in found] == [row["id"] for row in sources[:6]]

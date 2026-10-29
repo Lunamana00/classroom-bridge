@@ -18,8 +18,9 @@ KST = ZoneInfo("Asia/Seoul")
 DELIVERY_TTL = 7 * 24 * 3600
 REVIEW_TTL = 10 * 60
 APPROVAL_NOTICE = (
-    "교수가 문제·정답·해설·출처를 검토한 뒤 확인 문구를 명시적으로 보내야 배포합니다. "
-    "MCP 클라이언트는 이 응답만으로 자동 승인하지 말고 교수의 다음 답변을 기다리세요. "
+    "교수가 문제·정답·해설·출처를 검토한 뒤 배포를 명시적으로 승인해야 합니다. "
+    "MCP 클라이언트는 자연어로 배포 여부를 묻고 교수의 다음 실제 답변을 기다리세요. "
+    "검토 토큰과 확인 문구는 클라이언트가 내부에서 관리하며 교수에게 기술적인 문자열 입력을 요구하지 마세요. "
     "서버는 도구 호출만으로 실제 사람의 승인을 독립적으로 검증하지 못합니다."
 )
 NOTICE = (
@@ -28,6 +29,7 @@ NOTICE = (
 )
 FIELDS = {"title", "concepts", "question", "kind", "options", "correct_answer", "accepted_answers", "explanation", "source_chunk_ids"}
 ALIASES = {
+    "chainrule": ("연쇄법칙", "upstreamgradient", "localgradient"),
     "경사하강법": ("경사하강", "gradientdescent", "기울기", "sgd", "미니배치"),
     "학습률": ("학습률", "learningrate", "발산", "수렴", "스케줄"),
     "과적합": ("과적합", "overfit", "일반화", "generalization", "조기종료", "규제"),
@@ -316,7 +318,7 @@ class QuizStore:
         if not isinstance(review_token, str) or not re.fullmatch(r"[A-Za-z0-9_-]{43}", review_token):
             raise ValueError("검토 토큰을 확인해 주세요. 퀴즈를 다시 검토해 주세요.")
         if not isinstance(confirmation, str):
-            raise ValueError("교수의 명시적인 승인 문구가 필요합니다.")
+            raise ValueError("검토 확인값이 필요합니다. 교수의 배포 승인 뒤 같은 검토의 확인값을 전달해 주세요.")
         token_hash = hashlib.sha256(review_token.encode("ascii")).hexdigest()
         with self.service._db() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -331,7 +333,7 @@ class QuizStore:
             if quiz["status"] != "draft" or review["revision"] != quiz["revision"]:
                 raise ValueError("검토 후 퀴즈가 변경되었습니다. 최신 초안을 다시 검토하고 승인해 주세요.")
             if confirmation != review["confirmation_phrase"]:
-                raise ValueError("교수가 확인한 승인 문구를 그대로 입력해 주세요. 아직 배포하지 않았습니다.")
+                raise ValueError("검토 확인값이 일치하지 않습니다. 같은 검토에서 받은 확인값을 전달해 주세요. 아직 배포하지 않았습니다.")
             return self._publish_locked(db, quiz, teacher_id, "mcp")
 
     def archive(self, course_id, quiz_id, teacher_id):
