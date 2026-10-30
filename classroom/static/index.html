@@ -39,6 +39,10 @@
   <div class="content">
   <div class="account-actions"><span id="account-name"></span><small id="account-email"></small><span class="chip" id="course-role"></span><button class="button" id="invite-button" data-teacher-only>학생 초대</button><button class="button" id="members-button" data-teacher-only>참여자 관리</button><button class="button" id="oauth-connections">AI 연결 관리</button><button class="button" id="logout-button">로그아웃</button></div>
   <div id="global-error" class="error-message" role="alert" hidden></div>
+  <section class="page" id="page-setup" aria-labelledby="setup-title" hidden>
+    <div class="page-heading"><div><h1 id="setup-title">첫 수업을 개설해 보세요</h1><p>수업을 만들고 강의자료를 등록하면 학생 질문과 학습 활동을 한곳에서 확인할 수 있어요.</p></div></div>
+    <article class="panel"><div class="empty-state"><strong>아직 개설한 수업이 없어요.</strong><p>수업 이름을 정하고 첫 강의자료를 등록해 보세요.</p><button class="button button-primary" id="setup-new-course">새 수업 만들기<svg><use href="#i-plus"/></svg></button></div></article>
+  </section>
   <section class="page active" id="page-dashboard" aria-labelledby="dashboard-title">
     <div class="page-heading"><h1 id="dashboard-title">수업 현황</h1><div class="heading-actions"><button class="button button-outline" id="brief-button">보충 설명 준비</button><button class="button button-outline" id="exam-button">시험 출제 계획</button><a class="button button-dark" href="#student">질문 체험<svg><use href="#i-arrow"/></svg></a></div></div>
     <div class="dashboard-context"><span class="course-pill"><svg><use href="#i-book"/></svg><span id="course-pill-title">수업 불러오는 중</span></span><span id="demo-data-label" class="subtle-label"></span><span class="context-date" id="today-label"></span></div>

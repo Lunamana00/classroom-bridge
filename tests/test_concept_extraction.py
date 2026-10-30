@@ -25,6 +25,11 @@ def response_for(concepts=None):
     ]}
 
 
+@pytest.fixture(autouse=True)
+def isolate_identity_context_limit(monkeypatch):
+    monkeypatch.delenv("CONCEPT_IDENTITY_CONTEXT_CHARS", raising=False)
+
+
 @pytest.fixture
 def extractor(monkeypatch):
     monkeypatch.setenv("OPEN_API_KEY", "private-test-key")
@@ -228,6 +233,67 @@ async def test_identity_description_excerpt_is_explicit_and_sources_remain_whole
 
     transport(handler)
     assert await extractor.extract(CHUNKS, existing) == [PROPOSAL]
+
+
+async def test_explicit_identity_limit_preserves_all_identities_and_source_text(extractor, transport, monkeypatch):
+    existing = [*deepcopy(EXISTING), *[
+        {"id": index + 100, "name": f"Concept {index}", "aliases": [f"Alias {index}"],
+         "description": f"Definition {index}: " + "x" * 450,
+         "status": "approved" if index % 2 == 0 else "draft"}
+        for index in range(300)
+    ]]
+    original = deepcopy(existing)
+    monkeypatch.setenv("CONCEPT_IDENTITY_CONTEXT_CHARS", "200000")
+    provider = ConceptExtractor()
+    assert provider.identity_context_chars == 200000
+    # An explicit value wins; an absent value still uses the module constant.
+    monkeypatch.setattr("classroom.concept_extraction.EXISTING_CONTEXT_CHARS", 20)
+    calls = []
+
+    def handler(request):
+        payload = json.loads(json.loads(request.content)["input"])
+        approved = payload["existing_approved_concepts"]
+        drafts = payload["existing_draft_concepts"]
+        assert len(json.dumps({"approved": approved, "drafts": drafts}, ensure_ascii=False)) > 64000
+        assert [item["name"] for item in approved] == [item["name"] for item in existing if item["status"] == "approved"]
+        assert [item["name"] for item in drafts] == [item["name"] for item in existing if item["status"] == "draft"]
+        assert payload["source_passages"] == CHUNKS
+        assert all(len(item["description"]) == 300 and item["description_excerpted"] for item in [*approved[1:], *drafts])
+        calls.append(request)
+        return httpx.Response(200, json=response_for())
+
+    transport(handler)
+    assert await provider.extract(CHUNKS, existing) == [PROPOSAL]
+    assert len(calls) == 1
+    assert existing == original
+
+
+async def test_explicit_identity_limit_still_fails_before_any_api_call(extractor, transport, monkeypatch):
+    monkeypatch.setenv("CONCEPT_IDENTITY_CONTEXT_CHARS", "20")
+    provider = ConceptExtractor()
+
+    def forbidden(request):
+        pytest.fail("over-limit identities must not be dropped or sent to the provider")
+
+    transport(forbidden)
+    with pytest.raises(ConceptExtractionError, match="한도"):
+        await provider.extract(CHUNKS, EXISTING)
+
+
+@pytest.mark.parametrize("value", ["", " ", "0", "-1", "1.5", "1_000", "+100", "１２３", "private-invalid-setting"])
+async def test_invalid_identity_limit_disables_extraction_without_startup_failure(extractor, transport, monkeypatch, value):
+    monkeypatch.setenv("CONCEPT_IDENTITY_CONTEXT_CHARS", value)
+    provider = ConceptExtractor()
+    assert provider.configured is False
+    assert provider.configuration_error == "CONCEPT_IDENTITY_CONTEXT_CHARS는 양의 정수로 설정해 주세요."
+
+    def forbidden(request):
+        pytest.fail("invalid identity-limit configuration must not call the provider")
+
+    transport(forbidden)
+    with pytest.raises(ConceptExtractionError, match="CONCEPT_IDENTITY_CONTEXT_CHARS") as error:
+        await provider.extract(CHUNKS, EXISTING)
+    assert "private" not in str(error.value)
 
 
 def test_identity_history_preserves_semantic_symbols():

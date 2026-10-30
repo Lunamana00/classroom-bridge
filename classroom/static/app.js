@@ -2,7 +2,7 @@
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const state = {auth: null, config: null, courses: [], courseId: null, materials: [], analytics: null, quizzes: [], quizInsights: null, quizProgress: null, members: [], concepts: [], conceptJobs: [], conceptRequest: 0, conceptPoll: null, version: 0, prompt: '', dialogToken: 0};
-const pageTitles = {dashboard: '수업 현황', materials: '강의자료', concepts: '핵심 개념', quizzes: '개념 퀴즈', student: '학생 질문 체험', connect: 'AI 연결'};
+const pageTitles = {setup: '수업 개설', dashboard: '수업 현황', materials: '강의자료', concepts: '핵심 개념', quizzes: '개념 퀴즈', student: '학생 질문 체험', connect: 'AI 연결'};
 const escapeHTML = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[char]));
 const icon = name => `<svg aria-hidden="true"><use href="#i-${name}"/></svg>`;
 const course = () => state.courses.find(item => Number(item.id) === state.courseId);
@@ -48,7 +48,9 @@ async function busy(button, task, label = '불러오는 중…') {
 function route() {
   const requested = location.hash.slice(1);
   let page = pageTitles[requested] ? requested : 'dashboard';
-  if (state.auth && !isTeacher() && ['dashboard', 'concepts', 'quizzes'].includes(page)) page = 'student';
+  if (page === 'setup') page = 'dashboard';
+  if (needsCourseSetup() && page !== 'connect') page = 'setup';
+  else if (state.auth && !isTeacher() && ['dashboard', 'concepts', 'quizzes'].includes(page)) page = 'student';
   $$('.page').forEach(element => { element.hidden = element.id !== `page-${page}`; element.classList.toggle('active', !element.hidden); });
   $$('.nav a').forEach(element => { const active = element.dataset.page === page; element.classList.toggle('active', active); active ? element.setAttribute('aria-current','page') : element.removeAttribute('aria-current'); });
   $('#breadcrumb-title').textContent = pageTitles[page];
@@ -62,12 +64,13 @@ function setMenu(open) {
   $('#menu-button').setAttribute('aria-expanded', String(open));
 }
 const isTeacher = () => course()?.role === 'teacher' && state.auth?.can_create_course;
+const needsCourseSetup = () => Boolean(state.auth?.can_create_course && !state.courses.length);
 function updateAccess() {
   document.body.classList.toggle('student-mode', !isTeacher());
   $('#new-course').hidden = !state.auth?.can_create_course;
   $('#account-name').textContent = state.auth?.user?.name || '';
   $('#account-email').textContent = state.auth?.user?.email || '';
-  $('#course-role').textContent = isTeacher() ? '담당 교수' : '학생';
+  $('#course-role').textContent = isTeacher() ? '담당 교수' : needsCourseSetup() ? '교수 · 수업 개설 전' : '학생';
   route();
 }
 function updateCourseLabels() {
@@ -727,6 +730,7 @@ function bindEvents() {
   $('#sidebar-shade').addEventListener('click', () => setMenu(false));
   $('#course-select').addEventListener('change', async event => { state.courseId = Number(event.target.value); closeDialog(); await refreshCourse(); });
   $('#new-course').addEventListener('click', newCourseDialog);
+  $('#setup-new-course').addEventListener('click', newCourseDialog);
   $('#oauth-connections').addEventListener('click', async event => { try { await busy(event.currentTarget, async () => {
     const result = await api('/api/oauth/connections');
     showDialog('AI 연결 관리', result.connections.length ? result.connections.map(connection => `<div class="question-row"><div>${escapeHTML(connection.client_name || 'MCP 클라이언트')}<small> · ${connection.resource.endsWith('/instructor') ? '교수' : '학생'} 도구</small></div><button class="button" data-revoke-connection="${escapeHTML(connection.id)}">연결 해제</button></div>`).join('') : '<p>아직 승인한 MCP 연결이 없습니다.</p>');

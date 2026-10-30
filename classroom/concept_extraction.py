@@ -122,6 +122,17 @@ class ConceptExtractor:
         if mode not in {"auto", "api", "disabled"}:
             raise ValueError("CONCEPT_EXTRACTION_MODE는 auto, api, disabled 중 하나여야 합니다.")
         self.mode = mode
+        self.identity_context_chars = None
+        identity_configuration_error = None
+        identity_limit = os.environ.get("CONCEPT_IDENTITY_CONTEXT_CHARS")
+        if identity_limit is not None:
+            try:
+                value = identity_limit.strip()
+                if not value.isascii() or not value.isdecimal() or int(value) <= 0:
+                    raise ValueError
+                self.identity_context_chars = int(value)
+            except ValueError:
+                identity_configuration_error = "CONCEPT_IDENTITY_CONTEXT_CHARS는 양의 정수로 설정해 주세요."
         self.api_key = api_key()
         self.model = (
             os.environ.get("CONCEPT_MODEL", "").strip()
@@ -133,8 +144,10 @@ class ConceptExtractor:
             or "https://factchat-cloud.mindlogic.ai/v1/gateway"
         )
         demo = os.environ.get("CLASSROOM_MODE", "auto").strip().lower() == "demo"
-        self.configured = bool(self.api_key) and mode != "disabled" and (mode == "api" or not demo)
-        if mode == "disabled":
+        self.configured = bool(self.api_key) and mode != "disabled" and (mode == "api" or not demo) and not identity_configuration_error
+        if identity_configuration_error:
+            self.configuration_error = identity_configuration_error
+        elif mode == "disabled":
             self.configuration_error = "개념 자동 추출이 비활성화되어 있습니다. 서버의 CONCEPT_EXTRACTION_MODE를 확인해 주세요."
         elif not self.api_key:
             self.configuration_error = "개념 추출 API 키가 없습니다. 서버의 .env.local에 OPEN_API_KEY를 설정해 주세요."
@@ -216,7 +229,8 @@ class ConceptExtractor:
                 "existing_draft_concepts": drafts,
                 "previous_batch_concepts": previous,
             }
-            if len(_json(context)) > EXISTING_CONTEXT_CHARS:
+            context_limit = self.identity_context_chars if self.identity_context_chars is not None else EXISTING_CONTEXT_CHARS
+            if len(_json(context)) > context_limit:
                 raise ConceptExtractionError("개념 목록이 자동 통합 검토 한도를 넘었습니다. 자료와 개념 목록을 나누어 정리한 뒤 다시 추출해 주세요.")
             payload = {
                 "source_passages": batch,
